@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+
+<html><head>
+<meta charset="utf-8"/>
+<meta content="true" name="kombai-design-canvas"/>
+<script crossorigin="anonymous" integrity="sha384-2ql948lIdLcGEE0/qxNiudyTjgauA3RDJERu5xW75kFCvSl5a9odyQYCb6tEjnmB" src="https://unpkg.com/@tailwindcss/browser@4.3.3/dist/index.global.js"></script>
+<style>html, body { margin: 0; padding: 0; } #root { display: contents; }</style>
+
+<style>
+.demo-banner{padding:9px 18px;background:#fffbeb;color:#92400e;text-align:center;font:600 12px 'Plus Jakarta Sans',sans-serif;border-bottom:1px solid #fde68a}
+.demo-banner a{color:#9a3412;text-decoration:underline}
+.demo-nav{display:flex;flex-wrap:wrap;gap:8px;max-width:1240px;margin:0 auto;padding:10px 32px;background:white}
+.demo-nav a{padding:7px 11px;border-radius:9px;color:#334155;font:600 12px 'Plus Jakarta Sans',sans-serif;text-decoration:none}
+.demo-nav a:hover,.demo-nav a:focus{background:#fff7ed;color:#c2410c}
+.demo-dialog{position:fixed;z-index:9999;inset:0;background:#0f172a9c;display:flex;align-items:center;justify-content:center;padding:20px}
+.demo-dialog>section{background:white;border-radius:18px;max-width:460px;width:100%;padding:24px;box-shadow:0 20px 80px #0004}
+.demo-btn{border:0;border-radius:10px;background:#ea580c;color:#fff;font-weight:700;padding:11px 18px;cursor:pointer}
+.demo-field{width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:11px 12px;background:#fff;color:#0f172a}
+.demo-field:focus{outline:2px solid #0d9488;outline-offset:1px}
+.demo-label{display:block;font-size:13px;font-weight:700;color:#334155;margin:10px 0 5px}
+.demo-card{background:white;border:1px solid #e2e8f0;border-radius:16px;padding:22px}
+.demo-alert{border-radius:10px;padding:12px 14px;background:#fff7ed;color:#92400e;font-size:13px;margin:14px 0}
+.demo-success{border-radius:10px;padding:12px 14px;background:#ecfdf5;color:#065f46;font-size:13px;margin:14px 0}
+.demo-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.demo-hidden{display:none!important}
+@media(max-width:700px){.demo-grid{grid-template-columns:1fr}.demo-nav{padding:10px 14px}.demo-banner{line-height:1.6}}
+</style>
+</head><body><div class="demo-banner">BẢN MẪU GIAO DIỆN — dữ liệu giả lập trong trình duyệt; không gửi email, không kết nối .NET/PostgreSQL và không bảo đảm xác thực thật.</div><nav aria-label="Điều hướng demo" class="demo-nav"><a href="index.html">Trang chủ</a><a href="booking.html">Đặt lịch nhiều bé</a><a href="lookup.html">Tra cứu</a><a href="tracking.html">Tiến trình</a><a href="journal.html">Nhật ký</a><a href="invoice.html">Hóa đơn</a><a href="review.html">Đánh giá</a></nav>
+<div id="root"><style>
+    @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
+@import url('https://cdn.jsdelivr.net/npm/lucide-static@1.48.0/font/lucide.css');
+</style>
+<div class="min-h-screen bg-[#F8FAFC] text-[#0F172A]" data-kid="1" data-name="page layout container" style="font-family:'Plus Jakarta Sans',sans-serif">
+<div class="border-b border-[#E2E8F0] bg-white" data-kid="1-1" data-name="site header bar">
+<div class="mx-auto flex max-w-[1240px] items-center justify-between gap-8 px-8 py-4" data-kid="1-1-1" data-name="header inner layout row">
+<a aria-label="Nhà Mềm, trang chủ" class="flex shrink-0 items-center gap-3" data-kid="1-1-1-1" data-name="brand logo link" href="#">
+<span class="grid h-11 w-11 place-items-center rounded-[14px] bg-[#EA580C] text-white" data-kid="1-1-1-1-1" data-name="orange brand icon tile">
+<i class="icon-paw-print text-[22px]" data-kid="1-1-1-1-1-1" data-name="paw print brand icon" style="width:22px;height:22px;color:#fff">
+</i>
+</span>
+<span data-kid="1-1-1-1-2" data-name="brand name block">
+<span class="block text-[21px] font-extrabold leading-none text-[#0F172A]" data-kid="1-1-1-1-2-1" data-name="brand name text" style="font-family:'Nunito',sans-serif">
+                        Nhà Mềm
+                    </span>
+<span class="mt-1 block text-[10px] font-bold tracking-[.16em] text-[#64748B]" data-kid="1-1-1-1-2-2" data-name="brand tagline text">
+                        SPA &amp; KHÁCH SẠN THÚ CƯNG
+                    </span>
+</span>
+</a>
+<nav aria-label="Điều hướng chính" class="hidden items-center gap-8 text-[14px] font-semibold text-[#334155] lg:flex" data-kid="1-1-1-2" data-name="main navigation bar">
+<a class="text-[#EA580C]" data-kid="1-1-1-2-1" data-name="services nav link (active)" href="#dich-vu">
+                    Dịch vụ
+                </a>
+<a class="hover:text-[#EA580C]" data-kid="1-1-1-2-2" data-name="combo packages nav link" href="#goi-ket-hop">
+                    Gói kết hợp
+                </a>
+<a class="hover:text-[#EA580C]" data-kid="1-1-1-2-3" data-name="about us nav link" href="#ve-chung-toi">
+                    Về Nhà Mềm
+                </a>
+<a class="hover:text-[#EA580C]" data-kid="1-1-1-2-4" data-name="contact nav link" href="#lien-he">
+                    Liên hệ
+                </a>
+</nav>
+<div class="hidden items-center gap-5 xl:flex" data-kid="1-1-1-3" data-name="header contact actions container">
+<div class="text-right" data-kid="1-1-1-3-1" data-name="consultation phone block">
+<span class="block text-[11px] font-medium text-[#64748B]" data-kid="1-1-1-3-1-1" data-name="consultation label text">
+                        Tư vấn đặt lịch
+                    </span>
+<a class="text-[14px] font-bold text-[#0F172A]" data-kid="1-1-1-3-1-2" data-name="primary phone number link" href="tel:19001234">
+                        1900 1234
+                    </a>
+</div>
+<a class="inline-flex h-11 items-center gap-2 rounded-xl bg-[#EA580C] px-5 text-[14px] font-bold text-white shadow-sm" data-kid="1-1-1-3-2" data-name="primary book-appointment button link" href="booking.html">
+<i class="icon-calendar-days text-[17px]" data-kid="1-1-1-3-2-1" data-name="calendar days icon" style="width:17px;height:17px;color:#fff">
+</i>
+                    Đặt lịch ngay
+                </a>
+</div>
+<a class="inline-flex h-10 items-center rounded-xl bg-[#EA580C] px-4 text-[13px] font-bold text-white xl:hidden" data-kid="1-1-1-4" data-name="mobile book-appointment button link" href="booking.html">
+                Đặt lịch ngay
+            </a>
+</div>
+</div>
+<main data-kid="1-2" data-name="main content area">
+<section class="mx-auto grid max-w-[1240px] items-center gap-12 px-8 pb-16 pt-12 lg:grid-cols-[.92fr_1.08fr] lg:pb-20 lg:pt-14" data-kid="1-2-1" data-name="hero section with two-column layout">
+<div class="max-w-[530px]" data-kid="1-2-1-1" data-name="hero text column">
+<div class="mb-6 flex items-center gap-2 text-[13px] font-bold text-[#0D9488]" data-kid="1-2-1-1-1" data-name="hero location badge row">
+<span class="h-2 w-2 rounded-full bg-[#0D9488]" data-kid="1-2-1-1-1-1" data-name="teal dot indicator">
+</span>
+                    Chăm sóc thú cưng tận tâm tại TP. Hồ Chí Minh
+                </div>
+<h1 class="max-w-[510px] text-[50px] font-extrabold leading-[1.08] tracking-[-.035em] text-[#0F172A] xl:text-[58px]" data-kid="1-2-1-1-2" data-name="hero headline" style="font-family:'Nunito',sans-serif">
+                    Chăm sóc thật dịu dàng.
+                    <span class="text-[#EA580C]" data-kid="1-2-1-1-2-1" data-name="hero headline highlighted phrase">
+                        Đồng hành thật yên tâm.
+                    </span>
+</h1>
+<p class="mt-6 max-w-[465px] text-[16px] leading-7 text-[#64748B]" data-kid="1-2-1-1-3" data-name="hero description paragraph">
+                    Từ buổi spa thư giãn đến kỳ nghỉ ấm áp, mỗi bé đều được chăm sóc theo cách riêng — như ở nhà.
+                </p>
+<div class="mt-8 flex flex-wrap items-center gap-4" data-kid="1-2-1-1-4" data-name="hero call-to-action button row">
+<a class="inline-flex h-[52px] items-center gap-2 rounded-xl bg-[#EA580C] px-6 text-[14px] font-bold text-white shadow-[0_8px_18px_rgba(234,88,12,.18)]" data-kid="1-2-1-1-4-1" data-name="primary hero CTA button" href="booking.html">
+                        Đặt lịch ngay
+                        <i class="icon-arrow-right text-[17px]" data-kid="1-2-1-1-4-1-1" data-name="right arrow icon" style="width:17px;height:17px;color:#fff">
+</i>
+</a>
+<a class="inline-flex h-[52px] items-center gap-2 rounded-xl border border-[#E2E8F0] bg-white px-5 text-[14px] font-bold text-[#334155]" data-kid="1-2-1-1-4-2" data-name="secondary search CTA button" href="lookup.html">
+<i class="icon-search text-[17px]" data-kid="1-2-1-1-4-2-1" data-name="search icon" style="width:17px;height:17px;color:#64748B">
+</i>
+                        Tra cứu lịch hẹn
+                    </a>
+</div>
+<div class="mt-10 flex flex-wrap gap-x-8 gap-y-4 border-t border-[#E2E8F0] pt-6" data-kid="1-2-1-1-5" data-name="hero trust badges row">
+<div class="flex items-center gap-3" data-kid="1-2-1-1-5-1" data-name="gentle care trust badge">
+<span class="grid h-9 w-9 place-items-center rounded-full bg-[#FFF7ED] text-[#EA580C]" data-kid="1-2-1-1-5-1-1" data-name="heart icon badge circle">
+<i class="icon-heart text-[17px]" data-kid="1-2-1-1-5-1-1-1" data-name="heart icon" style="width:17px;height:17px;color:#EA580C">
+</i>
+</span>
+<span class="text-[12px] font-semibold text-[#475569]" data-kid="1-2-1-1-5-1-2" data-name="gentle care badge label">
+                            Chăm sóc nhẹ nhàng
+                        </span>
+</div>
+<div class="flex items-center gap-3" data-kid="1-2-1-1-5-2" data-name="same-day update trust badge">
+<span class="grid h-9 w-9 place-items-center rounded-full bg-[#E8F7F5] text-[#0D9488]" data-kid="1-2-1-1-5-2-1" data-name="shield icon badge circle">
+<i class="icon-shield-check text-[17px]" data-kid="1-2-1-1-5-2-1-1" data-name="shield check icon" style="width:17px;height:17px;color:#0D9488">
+</i>
+</span>
+<span class="text-[12px] font-semibold text-[#475569]" data-kid="1-2-1-1-5-2-2" data-name="same-day update badge label">
+                            Cập nhật trong ngày
+                        </span>
+</div>
+</div>
+</div>
+<div class="relative min-h-[420px] overflow-hidden rounded-[28px] bg-[#F4E3D4] shadow-[0_18px_42px_rgba(15,23,42,.10)]" data-kid="1-2-1-2" data-name="hero image card with overlay">
+<img alt="Chú chó thư giãn trong bồn tắm gỗ tại khu spa ấm áp của Nhà Mềm" class="absolute inset-0 h-full w-full object-cover object-center" data-kid="1-2-1-2-1" data-name="hero dog spa photo" decoding="async" loading="lazy" src="https://kombai-assets.b-cdn.net/generated_assets/9a265b3efd3e4452867970f49de59adf.jpg"/>
+<div class="absolute inset-0 bg-gradient-to-r from-[#0F172A]/20 via-transparent to-transparent" data-kid="1-2-1-2-2" data-name="hero image gradient overlay">
+</div>
+<div class="absolute bottom-5 left-5 flex items-center gap-3 rounded-2xl border border-white/70 bg-white/95 px-4 py-3 shadow-lg" data-kid="1-2-1-2-3" data-name="hero image caption card">
+<span class="grid h-10 w-10 place-items-center rounded-full bg-[#E8F7F5] text-[#0D9488]" data-kid="1-2-1-2-3-1" data-name="sparkles icon circle">
+<i class="icon-sparkles text-[18px]" data-kid="1-2-1-2-3-1-1" data-name="sparkles icon" style="width:18px;height:18px;color:#0D9488">
+</i>
+</span>
+<span data-kid="1-2-1-2-3-2" data-name="image caption text block">
+<span class="block text-[12px] font-bold text-[#0F172A]" data-kid="1-2-1-2-3-2-1" data-name="caption title text">
+                            Một ngày thật vui
+                        </span>
+<span class="mt-0.5 block text-[11px] text-[#64748B]" data-kid="1-2-1-2-3-2-2" data-name="caption subtitle text">
+                            Tụi mình sẽ cập nhật cho bạn
+                        </span>
+</span>
+</div>
+<div class="absolute right-5 top-5 rounded-full border border-white/70 bg-white/95 px-4 py-2 text-[12px] font-bold text-[#334155] shadow-sm" data-kid="1-2-1-2-4" data-name="availability status pill">
+<span class="mr-2 inline-block h-2 w-2 rounded-full bg-[#059669]" data-kid="1-2-1-2-4-1" data-name="green status dot">
+</span>
+                    Đang nhận lịch hôm nay
+                </div>
+</div>
+</section>
+<section class="border-y border-[#E2E8F0] bg-white py-14 lg:py-16" data-kid="1-2-2" data-name="services section" id="dich-vu">
+<div class="mx-auto max-w-[1240px] px-8" data-kid="1-2-2-1" data-name="services section inner container">
+<div class="mb-8 flex flex-wrap items-end justify-between gap-5" data-kid="1-2-2-1-1" data-name="services section heading row">
+<div data-kid="1-2-2-1-1-1" data-name="services heading block">
+<h2 class="text-[32px] font-extrabold tracking-[-.025em] text-[#0F172A]" data-kid="1-2-2-1-1-1-1" data-name="services section title" style="font-family:'Nunito',sans-serif">
+                            Dịch vụ cho từng người bạn nhỏ
+                        </h2>
+<p class="mt-2 text-[14px] text-[#64748B]" data-kid="1-2-2-1-1-1-2" data-name="services section subtitle">
+                            Chọn điều bé cần — bạn có thể kết hợp nhiều dịch vụ trong cùng một lịch hẹn.
+                        </p>
+</div>
+<a class="inline-flex items-center gap-2 text-[13px] font-bold text-[#EA580C]" data-kid="1-2-2-1-1-2" data-name="view all services link" href="#dat-lich">
+                        Xem tất cả dịch vụ
+                        <i class="icon-arrow-right text-[16px]" data-kid="1-2-2-1-1-2-1" data-name="right arrow icon" style="width:16px;height:16px;color:#EA580C">
+</i>
+</a>
+</div>
+<div class="grid gap-5 md:grid-cols-3" data-kid="1-2-2-1-2" data-name="services card grid">
+<article class="overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white" data-kid="1-2-2-1-2-1" data-name="SPA service card">
+<div class="relative h-[190px] overflow-hidden bg-[#F1F5F9]" data-kid="1-2-2-1-2-1-1" data-name="SPA card image area">
+<img alt="Chú chó được tắm nhẹ nhàng tại spa — ảnh của Goochie Poochie Grooming trên Pexels" class="h-full w-full object-cover" data-kid="1-2-2-1-2-1-1-1" data-name="SPA card photo" decoding="async" loading="lazy" src="https://images.pexels.com/photos/19145882/pexels-photo-19145882.jpeg?auto=compress&amp;cs=tinysrgb&amp;w=720&amp;q=80"/>
+<span class="absolute left-4 top-4 rounded-lg bg-[#EA580C] px-3 py-1.5 text-[11px] font-bold text-white" data-kid="1-2-2-1-2-1-1-2" data-name="SPA category badge">
+                                SPA
+                            </span>
+</div>
+<div class="p-5" data-kid="1-2-2-1-2-1-2" data-name="SPA card body">
+<div class="flex items-start justify-between gap-2" data-kid="1-2-2-1-2-1-2-1" data-name="SPA card title row">
+<h3 class="text-[18px] font-bold text-[#0F172A]" data-kid="1-2-2-1-2-1-2-1-1" data-name="SPA card title" style="font-family:'Nunito',sans-serif">
+                                    Tắm dưỡng &amp; sấy êm
+                                </h3>
+<span class="shrink-0 text-[12px] font-bold text-[#64748B]" data-kid="1-2-2-1-2-1-2-1-2" data-name="SPA card duration label">
+                                    60–90 phút
+                                </span>
+</div>
+<p class="mt-2 text-[13px] leading-5 text-[#64748B]" data-kid="1-2-2-1-2-1-2-2" data-name="SPA card description">
+                                Tắm sạch dịu nhẹ, sấy ấm và chải lông theo thể trạng của bé.
+                            </p>
+<div class="mt-5 flex items-center justify-between border-t border-[#E2E8F0] pt-4" data-kid="1-2-2-1-2-1-2-3" data-name="SPA card footer row">
+<p class="text-[12px] text-[#64748B]" data-kid="1-2-2-1-2-1-2-3-1" data-name="SPA card price label">
+                                    Từ
+                                    <strong class="ml-1 text-[16px] text-[#0F172A]" data-kid="1-2-2-1-2-1-2-3-1-1" data-name="SPA card price value">
+                                        180.000đ
+                                    </strong>
+</p>
+<a class="inline-flex items-center gap-1 text-[12px] font-bold text-[#EA580C]" data-kid="1-2-2-1-2-1-2-3-2" data-name="SPA card detail button" href="booking.html" title="Chọn dịch vụ trong biểu mẫu đặt lịch">
+                                    Xem chi tiết
+                                    <i class="icon-arrow-up-right text-[15px]" data-kid="1-2-2-1-2-1-2-3-2-1" data-name="upper-right arrow icon" style="width:15px;height:15px;color:#EA580C">
+</i>
+</a>
+</div>
+</div>
+</article>
+<article class="overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white" data-kid="1-2-2-1-2-2" data-name="hotel service card">
+<div class="relative h-[190px] overflow-hidden bg-[#F1F5F9]" data-kid="1-2-2-1-2-2-1" data-name="hotel card image area">
+<img alt="Chú chó nghỉ ngơi trên chiếc giường êm ái — ảnh của Jessika Arraes trên Pexels" class="h-full w-full object-cover" data-kid="1-2-2-1-2-2-1-1" data-name="hotel card photo" decoding="async" loading="lazy" src="https://images.pexels.com/photos/16539152/pexels-photo-16539152.jpeg?auto=compress&amp;cs=tinysrgb&amp;w=720&amp;q=80"/>
+<span class="absolute left-4 top-4 rounded-lg bg-[#0D9488] px-3 py-1.5 text-[11px] font-bold text-white" data-kid="1-2-2-1-2-2-1-2" data-name="hotel category badge">
+                                KHÁCH SẠN
+                            </span>
+</div>
+<div class="p-5" data-kid="1-2-2-1-2-2-2" data-name="hotel card body">
+<div class="flex items-start justify-between gap-2" data-kid="1-2-2-1-2-2-2-1" data-name="hotel card title row">
+<h3 class="text-[18px] font-bold text-[#0F172A]" data-kid="1-2-2-1-2-2-2-1-1" data-name="hotel card title" style="font-family:'Nunito',sans-serif">
+                                    Lưu trú phòng riêng
+                                </h3>
+<span class="shrink-0 text-[12px] font-bold text-[#64748B]" data-kid="1-2-2-1-2-2-2-1-2" data-name="hotel card duration label">
+                                    Theo đêm
+                                </span>
+</div>
+<p class="mt-2 text-[13px] leading-5 text-[#64748B]" data-kid="1-2-2-1-2-2-2-2" data-name="hotel card description">
+                                Không gian riêng yên tĩnh, có lịch ăn và vận động mỗi ngày.
+                            </p>
+<div class="mt-5 flex items-center justify-between border-t border-[#E2E8F0] pt-4" data-kid="1-2-2-1-2-2-2-3" data-name="hotel card footer row">
+<p class="text-[12px] text-[#64748B]" data-kid="1-2-2-1-2-2-2-3-1" data-name="hotel card price label">
+                                    Từ
+                                    <strong class="ml-1 text-[16px] text-[#0F172A]" data-kid="1-2-2-1-2-2-2-3-1-1" data-name="hotel card price value">
+                                        260.000đ
+                                    </strong>
+</p>
+<a class="inline-flex items-center gap-1 text-[12px] font-bold text-[#EA580C]" data-kid="1-2-2-1-2-2-2-3-2" data-name="hotel card detail button" href="booking.html" title="Chọn dịch vụ trong biểu mẫu đặt lịch">
+                                    Xem chi tiết
+                                    <i class="icon-arrow-up-right text-[15px]" data-kid="1-2-2-1-2-2-2-3-2-1" data-name="upper-right arrow icon" style="width:15px;height:15px;color:#EA580C">
+</i>
+</a>
+</div>
+</div>
+</article>
+<article class="overflow-hidden rounded-2xl border border-[#E2E8F0] bg-white" data-kid="1-2-2-1-2-3" data-name="combo package card">
+<div class="relative h-[190px] overflow-hidden bg-[#F1F5F9]" data-kid="1-2-2-1-2-3-1" data-name="combo card image area">
+<img alt="Chó lông xù vừa được chải chuốt gọn gàng — ảnh của Yaroslav Shuraev trên Pexels" class="h-full w-full object-cover" data-kid="1-2-2-1-2-3-1-1" data-name="combo card photo" decoding="async" loading="lazy" src="https://images.pexels.com/photos/8498861/pexels-photo-8498861.jpeg?auto=compress&amp;cs=tinysrgb&amp;w=720&amp;q=80"/>
+<span class="absolute left-4 top-4 rounded-lg bg-[#0F172A] px-3 py-1.5 text-[11px] font-bold text-white" data-kid="1-2-2-1-2-3-1-2" data-name="combo category badge">
+                                GÓI KẾT HỢP
+                            </span>
+</div>
+<div class="p-5" data-kid="1-2-2-1-2-3-2" data-name="combo card body">
+<div class="flex items-start justify-between gap-2" data-kid="1-2-2-1-2-3-2-1" data-name="combo card title row">
+<h3 class="text-[18px] font-bold text-[#0F172A]" data-kid="1-2-2-1-2-3-2-1-1" data-name="combo card title" style="font-family:'Nunito',sans-serif">
+                                    Gói Spa + 1 đêm
+                                </h3>
+<span class="shrink-0 text-[12px] font-bold text-[#64748B]" data-kid="1-2-2-1-2-3-2-1-2" data-name="combo card savings label">
+                                    Tiết kiệm 20%
+                                </span>
+</div>
+<p class="mt-2 text-[13px] leading-5 text-[#64748B]" data-kid="1-2-2-1-2-3-2-2" data-name="combo card description">
+                                Bé thơm tho, nghỉ ngơi thoải mái trong cùng một lần đặt.
+                            </p>
+<div class="mt-5 flex items-center justify-between border-t border-[#E2E8F0] pt-4" data-kid="1-2-2-1-2-3-2-3" data-name="combo card footer row">
+<p class="text-[12px] text-[#64748B]" data-kid="1-2-2-1-2-3-2-3-1" data-name="combo card price label">
+                                    Gói từ
+                                    <strong class="ml-1 text-[16px] text-[#0F172A]" data-kid="1-2-2-1-2-3-2-3-1-1" data-name="combo card price value">
+                                        420.000đ
+                                    </strong>
+</p>
+<a class="inline-flex items-center gap-1 text-[12px] font-bold text-[#EA580C]" data-kid="1-2-2-1-2-3-2-3-2" data-name="combo card detail button" href="booking.html" title="Chọn dịch vụ trong biểu mẫu đặt lịch">
+                                    Xem chi tiết
+                                    <i class="icon-arrow-up-right text-[15px]" data-kid="1-2-2-1-2-3-2-3-2-1" data-name="upper-right arrow icon" style="width:15px;height:15px;color:#EA580C">
+</i>
+</a>
+</div>
+</div>
+</article>
+</div>
+</div>
+</section>
+<section class="mx-auto grid max-w-[1240px] items-center gap-7 px-8 py-14 lg:grid-cols-[1.1fr_.9fr]" data-kid="1-2-3" data-name="combo packages CTA section" id="goi-ket-hop">
+<div data-kid="1-2-3-1" data-name="combo section text block">
+<h2 class="text-[28px] font-extrabold text-[#0F172A]" data-kid="1-2-3-1-1" data-name="combo section headline" style="font-family:'Nunito',sans-serif">
+                    Một lần đặt, đủ điều bé cần.
+                </h2>
+<p class="mt-3 max-w-[610px] text-[14px] leading-6 text-[#64748B]" data-kid="1-2-3-1-2" data-name="combo section description">
+                    Thêm dịch vụ spa, lưu trú hoặc cả hai cho từng bé. Giá hiển thị là mức ước tính; nhân viên sẽ xác nhận sau khi kiểm tra cân nặng và tình trạng lông thực tế.
+                </p>
+</div>
+<div class="flex items-center justify-between gap-5 rounded-2xl border border-[#C6E9E5] bg-[#EDFAF8] p-5" data-kid="1-2-3-2" data-name="combo highlight callout card">
+<div class="flex items-center gap-3" data-kid="1-2-3-2-1" data-name="combo callout icon-text group">
+<span class="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-[#0D9488]" data-kid="1-2-3-2-1-1" data-name="gift icon tile">
+<i class="icon-gift text-[20px]" data-kid="1-2-3-2-1-1-1" data-name="gift icon" style="width:20px;height:20px;color:#0D9488">
+</i>
+</span>
+<span data-kid="1-2-3-2-1-2" data-name="combo callout text block">
+<strong class="block text-[14px] text-[#0F172A]" data-kid="1-2-3-2-1-2-1" data-name="combo callout title">
+                            Gói chăm sóc kết hợp
+                        </strong>
+<span class="mt-1 block text-[12px] text-[#64748B]" data-kid="1-2-3-2-1-2-2" data-name="combo callout subtitle">
+                            Spa + lưu trú, ưu đãi theo gói
+                        </span>
+</span>
+</div>
+<a class="shrink-0 rounded-lg bg-[#0D9488] px-4 py-2.5 text-[12px] font-bold text-white" data-kid="1-2-3-2-2" data-name="explore combo button" href="booking.html">
+                    Khám phá gói
+                </a>
+</div>
+</section>
+</main>
+<footer class="bg-[#0F172A] text-white" data-kid="1-3" data-name="site footer" id="lien-he">
+<div class="mx-auto grid max-w-[1240px] gap-9 px-8 py-10 md:grid-cols-[1.4fr_1fr_1fr]" data-kid="1-3-1" data-name="footer content grid">
+<div data-kid="1-3-1-1" data-name="footer brand column">
+<div class="flex items-center gap-3" data-kid="1-3-1-1-1" data-name="footer brand logo row">
+<span class="grid h-10 w-10 place-items-center rounded-xl bg-[#EA580C]" data-kid="1-3-1-1-1-1" data-name="footer brand icon tile">
+<i class="icon-paw-print text-[20px]" data-kid="1-3-1-1-1-1-1" data-name="footer paw icon" style="width:20px;height:20px;color:#fff">
+</i>
+</span>
+<strong class="text-[19px]" data-kid="1-3-1-1-1-2" data-name="footer brand name" style="font-family:'Nunito',sans-serif">
+                        Nhà Mềm
+                    </strong>
+</div>
+<p class="mt-4 max-w-[340px] text-[12px] leading-5 text-slate-300" data-kid="1-3-1-1-2" data-name="footer brand description">
+                    Chăm sóc tử tế cho những người bạn nhỏ — từ buổi spa đầu tiên đến kỳ nghỉ đầu tiên.
+                </p>
+</div>
+<div data-kid="1-3-1-2" data-name="footer location column">
+<h3 class="text-[13px] font-bold" data-kid="1-3-1-2-1" data-name="footer location heading">
+                    Ghé Nhà Mềm
+                </h3>
+<p class="mt-3 text-[12px] leading-5 text-slate-300" data-kid="1-3-1-2-2" data-name="footer address text">
+                    125 Nguyễn Văn Thương, Bình Thạnh
+                    <br data-kid="1-3-1-2-2-1" data-name="line break in address"/>
+                    TP. Hồ Chí Minh
+                </p>
+<p class="mt-2 text-[12px] text-slate-300" data-kid="1-3-1-2-3" data-name="footer opening hours text">
+                    Thứ Hai – Chủ Nhật · 08:00–20:00
+                </p>
+</div>
+<div data-kid="1-3-1-3" data-name="footer contact column">
+<h3 class="text-[13px] font-bold" data-kid="1-3-1-3-1" data-name="footer support heading">
+                    Cần tụi mình hỗ trợ?
+                </h3>
+<a class="mt-3 flex items-center gap-2 text-[13px] font-semibold text-white" data-kid="1-3-1-3-2" data-name="footer phone link" href="tel:19001234">
+<i class="icon-phone text-[16px]" data-kid="1-3-1-3-2-1" data-name="phone icon" style="width:16px;height:16px;color:#FDBA74">
+</i>
+                    1900 1234
+                </a>
+<a class="mt-3 inline-flex text-[12px] font-semibold text-[#FDBA74]" data-kid="1-3-1-3-3" data-name="footer appointment lookup link" href="lookup.html" id="tra-cuu">
+                    Tra cứu lịch hẹn
+                    <span class="ml-1" data-kid="1-3-1-3-3-1" data-name="arrow indicator in lookup link">
+                        →
+                    </span>
+</a>
+</div>
+</div>
+<div class="border-t border-white/10 py-4 text-center text-[11px] text-slate-400" data-kid="1-3-2" data-name="footer copyright bar">
+            © 2026 Nhà Mềm · Luôn dịu dàng với mọi chiếc đuôi
+        </div>
+</footer>
+</div>
+</div>
+
+<script>
+(function(){
+'use strict';
+const sample={phone:'0903456678',tracking:'NM-2608-014',name:'Nguyễn Minh Anh',pets:[{name:'Milo',species:'Chó',service:'Spa'},{name:'Luna',species:'Mèo',service:'Hotel'}],status:'IN_PROGRESS',source:'sample'};
+window.PetDemo={
+ sample,
+ normalizePhone:s=>String(s||'').replace(/\D/g,''),
+ bookings(){try{return JSON.parse(localStorage.getItem('petspa_demo_bookings')||'[]')}catch(e){return []}},
+ save(b){const a=this.bookings();a.push(b);localStorage.setItem('petspa_demo_bookings',JSON.stringify(a))},
+ find(phone,tracking){return [sample,...this.bookings()].find(b=>this.normalizePhone(b.phone)===this.normalizePhone(phone)&&b.tracking.toUpperCase()===String(tracking||'').trim().toUpperCase())},
+ authorized(){try{const a=JSON.parse(sessionStorage.getItem('petspa_verified')||'null');return a&&this.find(a.phone,a.tracking)}catch(e){return null}},
+ setAuthorized(b){sessionStorage.setItem('petspa_verified',JSON.stringify({phone:b.phone,tracking:b.tracking}))},
+ currency(n){return Number(n||0).toLocaleString('vi-VN')+'đ'},
+ show(message){const el=document.createElement('div');el.className='demo-dialog';el.innerHTML='<section role="alertdialog" aria-modal="true"><h2 style="font-weight:800;font-size:19px;margin-bottom:12px">Thông báo bản demo</h2><p id="demo-msg" style="color:#475569;font-size:14px;line-height:1.65"></p><button class="demo-btn" style="margin-top:18px">Đóng</button></section>';el.querySelector('#demo-msg').textContent=message;el.querySelector('button').onclick=()=>el.remove();document.body.append(el)}
+};
+const path=location.pathname.split('/').pop()||'index.html';
+if(['tracking.html','journal.html','invoice.html','review.html'].includes(path) && !PetDemo.authorized())location.replace('lookup.html');
+if(path==='tracking.html'||path==='journal.html'){
+ const b=PetDemo.authorized();if(b&&b.source!=='sample'){
+  const main=document.querySelector('main');if(main){main.innerHTML='<div class="demo-card" style="max-width:850px;margin:28px auto"><h1 style="font-size:28px;font-weight:800">Lịch hẹn '+b.tracking+'</h1><p style="margin-top:10px;color:#64748b">Khách hàng: '+escapeText(b.name||'')+'</p><p class="demo-alert">Đây là lịch hẹn demo mới tạo. Chưa có nhân viên check-in, nhật ký ảnh hoặc dữ liệu thanh toán thật.</p><h2 style="font-weight:800;margin:18px 0 8px">Thú cưng trong lịch hẹn</h2><div id="demo-pets"></div><p style="margin-top:20px"><a href="invoice.html" style="color:#ea580c;font-weight:700">Xem hóa đơn tạm tính →</a></p></div>';const el=main.querySelector('#demo-pets');(b.pets||[]).forEach(p=>{const card=document.createElement('div');card.className='demo-alert';card.textContent=p.name+' · '+p.species+' · '+p.service+' · Chờ xác nhận';el.append(card)});}
+ }
+}
+function escapeText(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+document.addEventListener('click',function(e){
+ const a=e.target.closest('[data-demo-action]');if(!a)return;
+ if(a.dataset.demoAction==='sync'){e.preventDefault();PetDemo.show('Dữ liệu demo tĩnh. Khi tích hợp .NET Web API, nút này sẽ tải cập nhật mới từ máy chủ.')}
+ if(a.dataset.demoAction==='addon'){e.preventDefault();PetDemo.show('Yêu cầu thêm dịch vụ cần Backend để kiểm tra và phê duyệt. Giao diện hiện chỉ là prototype, chưa gửi yêu cầu.')}
+});
+})();
+</script>
+</body></html>

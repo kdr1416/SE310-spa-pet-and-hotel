@@ -1,0 +1,183 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+@layer base {
+  :root {
+    --color-primary: #ea580c;
+    --color-accent: #ea580c;
+    --color-background: #faf8f5;
+    --color-foreground: #0f172a;
+  }
+  html {
+    font-family: "Plus Jakarta Sans", sans-serif;
+    color: #334155;
+    background: #faf8f5;
+  }
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6,
+  .font-heading {
+    font-family: "Nunito", sans-serif;
+    font-weight: 800;
+    color: #0f172a;
+  }
+  h1 {
+    font-size: clamp(1.8rem, 4vw, 3.5rem);
+    line-height: 1.08;
+    letter-spacing: -.035em;
+  }
+  h2 {
+    font-size: 1.75rem;
+    line-height: 1.25;
+  }
+  h3 {
+    font-size: 1.125rem;
+    line-height: 1.4;
+  }
+  button,
+  a,
+  select,
+  input[type="file"],
+  summary {
+    cursor: pointer;
+  }
+  button,
+  a {
+    transition:
+      background-color 0.2s,
+      color 0.2s,
+      box-shadow 0.2s;
+  }
+  :focus-visible {
+    outline: 3px solid #0f766e;
+    outline-offset: 3px;
+  }
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+  input,
+  select,
+  textarea {
+    max-width: 100%;
+  }
+}
+@layer components {
+  .page {
+    @apply mx-auto w-full max-w-[1200px] px-4 py-8 md:px-8 md:py-12;
+  }
+  .panel {
+    @apply rounded-2xl border border-app-border bg-app-surface p-5 shadow-card md:p-6;
+  }
+  .btn {
+    @apply inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-4 py-2 text-sm font-bold text-slate-700 transition-colors hover:bg-stone-50;
+  }
+  .btn-primary {
+    @apply btn border-transparent bg-sunset text-white shadow-warm-md hover:shadow-warm-lg hover:scale-[1.01] active:scale-[0.99] font-extrabold;
+  }
+  .btn-accent {
+    @apply btn border-transparent bg-sunset text-white shadow-warm-md hover:shadow-warm-lg hover:scale-[1.01] active:scale-[0.99] font-extrabold;
+  }
+  .btn-danger {
+    @apply btn border-red-200 bg-red-50 text-red-700 hover:bg-red-100;
+  }
+  .field {
+    @apply w-full rounded-xl border border-stone-300 bg-stone-50/50 px-3.5 py-2.5 text-sm font-semibold text-slate-800 transition-all placeholder:text-stone-400 focus:border-primary-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary-500/20;
+  }
+  .label {
+    @apply block space-y-1.5 text-xs font-bold uppercase tracking-wider text-stone-600;
+  }
+  .muted {
+    @apply text-sm leading-relaxed text-slate-500;
+  }
+  .eyebrow {
+    @apply text-xs font-bold uppercase tracking-[.15em] text-primary-700;
+  }
+  .badge {
+    @apply inline-flex rounded-full border border-app-border bg-primary-50 px-3 py-1 text-xs font-bold text-primary-800;
+  }
+  .error {
+    @apply rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800;
+  }
+  .success {
+    @apply rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800;
+  }
+  .table-wrap {
+    @apply w-full overflow-x-auto rounded-xl border border-app-border;
+  }
+  table {
+    @apply w-full text-left text-sm;
+  }
+  th {
+    @apply whitespace-nowrap bg-stone-50 px-4 py-3 font-bold text-slate-700;
+  }
+  td {
+    @apply border-t border-app-border px-4 py-3 align-top;
+  }
+
+  .brand-squircle {
+    @apply grid place-items-center rounded-2xl bg-sunset text-white shadow-warm-sm transition-transform;
+  }
+  .overview-banner {
+    @apply relative overflow-hidden rounded-squircle p-6 md:p-9 bg-sunset border border-white/25 shadow-warm-lg text-white;
+  }
+  .overview-banner h2 {
+    @apply text-white tracking-tight;
+  }
+  .overview-banner-mark {
+    @apply absolute right-5 -bottom-2.5 text-white/15 pointer-events-none rotate-6;
+  }
+  .overview-metric {
+    @apply relative rounded-squircle p-5 md:p-6 border transition-all duration-200 ease-out hover:-translate-y-1;
+  }
+  .overview-attention {
+    @apply p-6 rounded-squircle bg-attention border border-primary-200 shadow-card-warm;
+  }
+  .overview-queue-link {
+    @apply flex items-center justify-between gap-4 rounded-2xl bg-white border border-primary-200 p-4 text-sm font-bold text-primary-900 shadow-warm-sm transition-all hover:border-primary-400 hover:-translate-y-0.5 hover:shadow-warm-md;
+  }
+  .overview-queue-link strong {
+    font-family: "Nunito", sans-serif;
+    @apply text-3xl font-black text-primary-600;
+  }
+  .overview-shortcut {
+    @apply flex items-center justify-between gap-3 rounded-xl p-3.5 bg-app-subtle border border-app-border text-slate-700 text-sm font-semibold transition-all hover:bg-primary-50 hover:border-primary-200 hover:text-primary-700 hover:translate-x-1;
+  }
+  .overview-empty {
+    @apply grid justify-items-center gap-2.5 p-9 text-center text-stone-500 text-sm bg-app-subtle rounded-2xl border-2 border-dashed border-app-border;
+  }
+}
+.customer-highlight { color: #ea580c; }
+.customer-brand { @apply brand-squircle; }
+.promo-panel :is(h2, h3) { color: #fff; }
+.p-dialog {
+  color: #334155;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 18px 42px rgba(15,23,42,.10);
+}
+.p-dialog-title { font-family: "Nunito", sans-serif; font-weight: 800; color: #0f172a; }
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  .panel {
+    box-shadow: none;
+  }
+  body,
+  html {
+    background: white;
+  }
+}
