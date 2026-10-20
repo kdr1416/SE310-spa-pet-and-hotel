@@ -48,19 +48,8 @@
           </p>
           <div class="mt-3 flex flex-wrap gap-2">
             <button class="btn" @click="selectedId = b.id">Chi tiết</button
-            ><button
-              class="btn-primary"
-              :disabled="busy"
-              @click="review(b, 'CONFIRMED')"
             >
-              Chấp nhận</button
-            ><button
-              class="btn-danger"
-              :disabled="busy"
-              @click="review(b, 'CANCELLED')"
-            >
-              Từ chối
-            </button>
+            <BookingDecisionPanel :booking="b" @changed="load" />
           </div>
         </article>
       </div>
@@ -197,7 +186,7 @@
   </div>
 </template>
 <script setup>
-import { ref, computed, onMounted } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
 import { useRoute } from "vue-router";
 import Dialog from "primevue/dialog";
 import { useAuthStore } from "@/stores/auth";
@@ -210,6 +199,7 @@ import { estimatePet } from "@/utils/pricing";
 import ActionFeedback from "@/components/shared/ActionFeedback.vue";
 import BookingForm from "./BookingForm.vue";
 import BookingDetailDialog from "./BookingDetailDialog.vue";
+import BookingDecisionPanel from "./BookingDecisionPanel.vue";
 const store = useWorkspaceStore(),
   auth = useAuthStore(),
   route = useRoute(),
@@ -280,6 +270,11 @@ async function created(b) {
   await load();
   selectedId.value = b.id;
 }
+watch(() => route.query.code, async (code) => {
+  if (!code) return;
+  await load();
+  selectedId.value = store.bookings.find((b) => b.trackingCode === code)?.id || null;
+});
 async function review(b, decision) {
   await perform(async () => {
     await bookingService.reviewBooking({ id: b.id, decision });

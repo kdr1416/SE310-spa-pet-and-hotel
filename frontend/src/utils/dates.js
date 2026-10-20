@@ -27,3 +27,8 @@ export function weekDays(date = localDate()) {
 export function dateLabel(date) {
   return date?.split("-").reverse().join("/") || "—";
 }
+export function weekdayLabel(date) {
+  if (!Number.isFinite(dateNumber(date))) return "—";
+  const day = new Date(dateNumber(date)).getUTCDay();
+  return `${day === 0 ? "Chủ nhật" : "Thứ " + ["", "Hai", "Ba", "Tư", "Năm", "Sáu", "Bảy"][day]} · ${dateLabel(date)}`;
+}

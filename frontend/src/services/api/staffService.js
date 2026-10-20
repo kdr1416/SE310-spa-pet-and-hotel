@@ -7,4 +7,7 @@ export const staffService = service([
   "getSettings",
   "updateCapacity",
   "updateShift",
+  "updateVaccinePolicy",
+  "changeRole",
+  "getMailOutbox",
 ]);

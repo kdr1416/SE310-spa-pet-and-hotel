@@ -36,10 +36,9 @@ describe("bookings and lookup", () => {
       b = run("createBooking", p, null);
     expect(run("createBooking", p, null).id).toBe(b.id);
     expect(() => create(1)).toThrow(/chỗ/);
-    run("reviewBooking", { id: b.id, decision: "CANCELLED" }, 2);
-    expect(() =>
-      run("reviewBooking", { id: b.id, decision: "CANCELLED" }, 2),
-    ).toThrow();
+    const rejection = { id: b.id, decision: "CANCELLED", reason: "Tiệm không đáp ứng được" };
+    run("reviewBooking", rejection, 2);
+    expect(run("reviewBooking", rejection, 2).id).toBe(b.id);
     expect(create(2).chiTietDonList).toHaveLength(2);
   });
   it("checks both phone/code and blocks brute force with a generic error", () => {

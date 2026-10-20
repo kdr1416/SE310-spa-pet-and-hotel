@@ -6,7 +6,8 @@ import {
   deriveBookingStatus,
 } from "../../utils/bookingRules";
 import { estimateBooking, estimatePet } from "../../utils/pricing";
-import { addDays, localDate, weekDays } from "../../utils/dates";
+import { addDays, localDate, weekDays, dateNumber } from "../../utils/dates";
+import { upgradeMockState, hasSpa, hasHotel, assertBookingAvailability, roomCalendar } from "./bookingAvailability";
 
 const find = (items, id, label = "Dữ liệu") => {
   const item = items.find((x) => String(x.id) === String(id));
@@ -29,7 +30,7 @@ export function remaining(state, date, shiftId) {
         b.trangThai !== "CANCELLED",
     )
     .reduce(
-      (n, b) => n + b.chiTietDonList.filter((d) => !d.laDichVuThem).length,
+      (n, b) => n + b.chiTietDonList.filter((d) => !d.laDichVuThem && hasSpa(d.input)).length,
       0,
     );
   return { total, reserved, left: total - reserved };
@@ -68,6 +69,7 @@ function mutable(b) {
   assert(!b.hoaDon, "Đã tạo hóa đơn snapshot; không thể thay đổi dịch vụ/giá.");
 }
 function assignmentValid(s, registration, employeeId) {
+  assert(!s.closedDays[registration.date] || registration.purpose === "HOTEL_CARE", "Ngày nghỉ chỉ đăng ký ca chăm sóc Hotel.");
   const u = find(s.users, employeeId, "Nhân viên");
   assert(u.isActive, "Nhân viên không hoạt động.");
   const period = find(s.periods, registration.periodId);
@@ -108,6 +110,7 @@ function detailFrom(p, price) {
       giongLoai: p.breed || "",
       canNangDangKy: Number(p.weight),
       ghiChuDiUng: p.notes || "",
+      loaiLong: p.coatType || null,
     },
     input: structuredClone(p),
     label: price.label,
@@ -121,6 +124,7 @@ function detailFrom(p, price) {
 }
 /** Synchronous transaction body. Caller commits only successful operations except lookup attempt counters. */
 export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
+  upgradeMockState(s, now);
   const actor = s.users.find((u) => u.id === Number(actorId));
   const allow = (c) => requireAccess(actor, c);
   const timestamp = new Date(now).toISOString();
@@ -129,6 +133,9 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
       return {
         ...s.catalog,
         surchargeRules: s.surchargeRules,
+        vaccinePolicy: { ...s.settings.vaccinePolicy },
+        closedDays: s.closedDays,
+        roomAvailability: p.date && Number.isFinite(dateNumber(p.date)) ? roomCalendar(s, p.date, p.days) : [],
         availability: p.date
           ? s.catalog.shifts.map((shift) => ({
               ...shift,
@@ -168,6 +175,7 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
         s.catalog,
       );
       assert(!errors.length, errors.join(" "));
+      assertBookingAvailability(s, p);
       const prices = estimateBooking(p, s.catalog);
       let code;
       do {
@@ -189,6 +197,8 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
           email: p.customer.email.trim(),
         },
         date: p.date,
+        endDate: p.pets.some(hasHotel) ? p.pets[0].checkout : p.date,
+        bookingEmail: p.customer.email.trim().toLowerCase(),
         shiftId: Number(p.shiftId),
         trangThai: "PENDING",
         thoiGianBatDau: `${p.date}T${shift.gioBatDau}:00+07:00`,
@@ -210,11 +220,19 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
     case "reviewBooking": {
       allow("BOOKING_MANAGE");
       const b = find(s.bookings, p.id, "Đơn");
+      if (b.trangThai === p.decision && p.decision === "CANCELLED" && b.lyDoHuy === p.reason?.trim()) return b;
       assert(b.trangThai === "PENDING", "Đơn đã được xử lý.");
       assert(
         ["CONFIRMED", "CANCELLED"].includes(p.decision),
         "Quyết định không hợp lệ.",
       );
+      if (p.decision === "CANCELLED") {
+        assert(typeof p.reason === "string" && p.reason.trim().length > 0 && p.reason.trim().length <= 1000, "Nhập lý do từ chối (tối đa 1000 ký tự).");
+        b.loaiHuy = "STAFF_REJECTED";
+        b.lyDoHuy = p.reason.trim();
+        b.huyAt = timestamp;
+        b.nguoiHuyId = actor.id;
+      }
       b.trangThai = p.decision;
       b.updatedAt = timestamp;
       return b;
@@ -234,6 +252,8 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
       assert(b.trangThai !== "PENDING", "Chấp nhận đơn trước khi tiếp nhận.");
       const d = find(b.chiTietDonList, p.detailId, "Thú cưng");
       assert(!d.checkedIn, "Thú cưng đã được tiếp nhận.");
+      const policyRequired = s.settings.vaccinePolicy[d.input.type];
+      assert(!policyRequired || p.vaccineVerified === true, "Nhân viên cần xác minh giấy tiêm chủng trước khi tiếp nhận.");
       const u = find(s.users, p.employeeId, "Nhân viên");
       assert(
         u.isActive && u.vaiTro === "STAFF" && u.workGroup === "SPA",
@@ -250,6 +270,7 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
         s.catalog,
       );
       d.canNangThucTe = Number(p.weight);
+      if (p.vaccineVerified === true) d.vaccineVerification = { by: actor.id, at: timestamp };
       d.tinhTrangLong = p.coat;
       d.donGiaChot = price.amount;
       d.checkedIn = true;
@@ -535,6 +556,61 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
       if (!p.id) s.surchargeRules.push(rule);
       return rule;
     }
+    case "resendTracking": {
+      const email = String(p.email || "").trim().toLowerCase();
+      const response = { message: "Nếu thông tin phù hợp, hệ thống sẽ gửi email. Đây là mô phỏng, chưa gửi SMTP thật." };
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 150) return response;
+      // Uniform response and cooldown for both known and unknown addresses.
+      const previous = s.resendAttempts[email];
+      if (previous !== undefined && now - previous < 60000) return response;
+      s.resendAttempts[email] = now;
+      for (const [key, time] of Object.entries(s.resendAttempts)) if (now - time > 900000) delete s.resendAttempts[key];
+      const trackingCodes = s.bookings.filter((b) =>
+        !["COMPLETED", "CANCELLED"].includes(b.trangThai) &&
+        String(b.bookingEmail || b.khachHang.email).trim().toLowerCase() === email)
+        .map((b) => b.trackingCode);
+      if (trackingCodes.length) s.mailOutbox.push({ id: id(), to: email, trackingCodes, createdAt: timestamp });
+      return response;
+    }
+    case "getMailOutbox":
+      allow("STAFF_MANAGE");
+      return s.mailOutbox;
+    case "changeRole": {
+      allow("STAFF_MANAGE");
+      assert(["ADMIN", "STAFF"].includes(p.role), "Role không hợp lệ.");
+      const u = find(s.users, p.id, "Tài khoản");
+      assert(!(u.vaiTro === "ADMIN" && u.isActive && p.role === "STAFF" &&
+        s.users.filter((x) => x.vaiTro === "ADMIN" && x.isActive).length <= 1), "Cần giữ ít nhất một Admin hoạt động.");
+      u.vaiTro = p.role;
+      u.workGroup ||= "RECEPTION";
+      u.roleChangedAt = timestamp;
+      u.roleChangedBy = actor.id;
+      return cleanUser(u);
+    }
+    case "updateVaccinePolicy": {
+      allow("SYSTEM_MANAGE");
+      const types = ["SPA", "HOTEL", "COMBO_SPA_HOTEL"];
+      assert(types.every((type) => typeof p.policy?.[type] === "boolean"), "Cấu hình vaccine không hợp lệ.");
+      s.settings.vaccinePolicy = Object.fromEntries(types.map((type) => [type, p.policy[type]]));
+      return { ...s.settings.vaccinePolicy };
+    }
+    case "updateClosedDays": {
+      allow("STAFF_MANAGE");
+      assert(Number.isFinite(dateNumber(p.week)) && weekDays(p.week)[0] === p.week &&
+        p.week >= addDays(weekDays(localDate(new Date(now)))[0], 7), "Chọn tuần tương lai bắt đầu từ thứ Hai.");
+      assert(!s.periods.some((period) => period.week === p.week &&
+        (period.published || period.openedAt || (period.open && now >= Date.parse(period.openAt)))), "Tuần đã mở form đăng ký; không được sửa ngày nghỉ.");
+      const days = weekDays(p.week);
+      assert(Array.isArray(p.dates) && p.dates.every((date) => days.includes(date)), "Ngày nghỉ cần thuộc tuần đã chọn.");
+      const selected = [...new Set(p.dates)];
+      assert(!s.bookings.some((b) => !["CANCELLED", "COMPLETED"].includes(b.trangThai) &&
+        (selected.includes(b.date) || b.chiTietDonList.some((d) => hasHotel(d.input) && selected.includes(d.input.checkout)))),
+        "Ngày nghỉ xung đột booking nhận/trả đã có. Hãy xử lý lịch hẹn trước.");
+      assert(!s.registrations.some((r) => selected.includes(r.date) && r.status !== "REJECTED" && r.purpose !== "HOTEL_CARE"), "Ngày đã có đăng ký ca tiếp nhận.");
+      for (const date of days) delete s.closedDays[date];
+      for (const date of selected) s.closedDays[date] = { reason: String(p.reason || "Nghỉ tiếp nhận").slice(0, 200), by: actor.id, at: timestamp };
+      return s.closedDays;
+    }
     case "getSchedule": {
       allow("SCHEDULE_SELF");
       const admin = actor.vaiTro === "ADMIN";
@@ -552,6 +628,7 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
         ),
         users: admin ? s.users.map(cleanUser) : [cleanUser(actor)],
         shifts: s.catalog.shifts,
+        closedDays: s.closedDays,
       };
     }
     case "createPeriod": {
@@ -582,6 +659,7 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
         capacity: Number(p.capacity),
         open: true,
         published: false,
+        openedAt: now >= Date.parse(p.openAt) ? timestamp : null,
       };
       s.periods.push(period);
       return period;
@@ -590,7 +668,9 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
       allow("STAFF_MANAGE");
       const period = find(s.periods, p.id);
       assert(!period.published, "Lịch đã chốt.");
+      if (period.open && now >= Date.parse(period.openAt)) period.openedAt ||= timestamp;
       period.open = !period.open;
+      if (period.open && now >= Date.parse(period.openAt)) period.openedAt ||= timestamp;
       return period;
     }
     case "registerShift": {
@@ -609,6 +689,9 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
       );
       const shift = find(s.catalog.shifts, p.shiftId);
       assert(shift.isActive, "Ca đã ngừng hoạt động.");
+      const purpose = p.purpose || "RECEPTION";
+      assert(["RECEPTION", "HOTEL_CARE"].includes(purpose), "Loại ca không hợp lệ.");
+      assert(!s.closedDays[p.date] || purpose === "HOTEL_CARE", "Ngày nghỉ chỉ đăng ký ca chăm sóc Hotel.");
       assert(
         !s.registrations.some(
           (r) =>
@@ -627,6 +710,7 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
         date: p.date,
         shiftId: Number(p.shiftId),
         status: "PENDING",
+        purpose,
         createdAt: timestamp,
       };
       s.registrations.push(r);
@@ -749,6 +833,7 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
         shifts: s.catalog.shifts,
         capacity: s.capacity,
         bookings: s.bookings,
+        vaccinePolicy: { ...s.settings.vaccinePolicy },
       };
     case "updateCapacity": {
       allow("SYSTEM_MANAGE");

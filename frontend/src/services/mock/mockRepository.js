@@ -1,5 +1,6 @@
 import { createSeed } from "./seed";
 import { execute } from "./mockOperations";
+import { upgradeMockState } from "./bookingAvailability";
 let database;
 function openDatabase() {
   if (database) return database;
@@ -36,12 +37,13 @@ export async function transaction(operation, { commitError = false } = {}) {
     let result, error;
     const request = tx.objectStore("data").get("state");
     request.onsuccess = () => {
-      const state = request.result || createSeed();
+      const state = request.result || createSeed({ demo: true });
       try {
         if (state.version !== 1)
           throw new Error(
             "Phiên bản dữ liệu không hỗ trợ; dữ liệu được giữ nguyên.",
           );
+        upgradeMockState(state);
         result = operation(state);
       } catch (e) {
         error = e;

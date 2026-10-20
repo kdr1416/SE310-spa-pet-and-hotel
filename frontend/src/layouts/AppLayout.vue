@@ -39,6 +39,7 @@
             <span>Trang khách</span>
           </RouterLink>
 
+          <BookingNotifications />
           <!-- User profile pill -->
           <div class="inline-flex items-center gap-2.5 rounded-2xl border border-primary-200 bg-gradient-to-r from-pastel-orange to-white px-3.5 py-1.5 shadow-2xs">
             <span class="relative flex h-2 w-2">
@@ -151,6 +152,7 @@ import {
   User,
 } from "lucide-vue-next";
 import { useAuthStore } from "@/stores/auth";
+import BookingNotifications from '@/components/shared/BookingNotifications.vue';
 
 const auth = useAuthStore();
 const route = useRoute();

@@ -253,3 +253,55 @@ Mỗi bước: bổ sung test cho hành vi cần bảo vệ → xác nhận test
 
 Trước phần implementation liên quan cần duyệt: phạm vi/luồng, phương án phân quyền, lựa chọn storage và dependency test theo từng giai đoạn. Chưa bắt buộc cài cả 3 gói test. QR thanh toán thực và hợp đồng Backend chưa đủ dữ kiện vẫn tách thành việc cần chốt sau; mock không bị phụ thuộc vào chúng.
 
+## 7. Đợt bổ sung ngày 18/10/2026 — đã duyệt và triển khai frontend/mock
+
+**Goal:** hoàn thiện các yêu cầu UI mới của Customer/Staff/Admin và mock tương ứng; không tự triển khai mọi UC đang thiếu.
+
+**Spec:** [scope-and-decisions.md, D15–D19](../requirements/scope-and-decisions.md). Năm lựa chọn nghiệp vụ đã được người dùng chốt, bao gồm cho phép sửa mock data. Các mục đã hoàn thành ở kế hoạch 13/10 là lịch sử của mock cũ, không chứng minh đợt bổ sung này đã làm.
+
+**Architecture:** giữ Vue/Pinia/service boundary và transaction IndexedDB. Dữ liệu ngày nghỉ, tồn phòng, email gửi lại và role được xử lý ở mock service trước khi phản chiếu lên UI. Không gọi SMTP thật từ browser, thêm dependency hoặc đổi visual design hiện có.
+
+**Phạm vi:** cấu hình xác minh giấy tiêm tại check-in, upload tùy chọn cho mọi loại dịch vụ; loại lông riêng; thời gian/công suất theo Spa và Hotel; ngày nghỉ nhận/trả nhưng vẫn chăm sóc Hotel; notification booking PENDING; từ chối có lý do/xác nhận và nút cuối chi tiết; chọn ca từ lịch, thứ/ngày; đổi ADMIN/STAFF; gửi lại Tracking bằng email.
+
+**Ngoài đợt này:** các UC thiếu khác như lookup hồ sơ cũ, dời lịch, đầy đủ hủy/no-show, tạo catalog và bàn giao lẻ không tự gộp vào implementation. Các sai lệch khác với thiết kế mục tiêu vẫn phải được ghi rõ, không báo frontend đã hoàn thiện đủ 28 mục.
+
+### 7.1. Quyết định triển khai đề xuất
+
+- Admin cấu hình yêu cầu xác minh vaccine theo Spa/Hotel/Spa + Hotel, mặc định tắt. Khách đặt được khi chưa upload ở mọi chế độ. Nếu bật, check-in từng pet phải được nhân viên xác minh ảnh đã gửi hoặc giấy mang tới quầy, lưu actor/thời điểm; service từ chối tiếp nhận chưa xác minh. Khách tự đánh dấu hoặc chỉ tải ảnh không được coi là nhân viên đã kiểm tra. Cấu hình tắt cho phép tiếp nhận thiếu giấy; các ảnh đầu/cuối chăm sóc vẫn bắt buộc theo quy tắc riêng.
+- Loại lông dùng field riêng (ngắn/dài/khác, có nhãn chưa cập nhật cho dữ liệu cũ); không tự nhân giá. Giữ nguyên field tình trạng lông của check-in.
+- Lịch Spa hiển thị suất từng ca, chỉ đếm pet có Spa. Hotel hiển thị suất theo loại phòng và từng ngày của khoảng [nhận,trả); vẫn chọn ca hẹn bàn giao, không khóa Hotel-only khi Spa hết chỗ. Combo phải thỏa cả hai loại công suất.
+- Booking nhiều pet vẫn chung ngày nhận/trả dự kiến theo baseline; không để UI cho mỗi pet chọn ngày trả khác nhau. Ngày trả Hotel không tính là một đêm mới.
+- Ngày nghỉ tiếp nhận và ca chăm sóc lưu trú phải phân biệt trong mock. Cho lưu trú đi qua ngày nghỉ; chặn ngày nhận/ngày trả đã nghỉ. Nhân viên chăm sóc Hotel vẫn có thể đăng ký ca trực tương ứng; không disable toàn bộ lịch một ngày. Nếu có booking hẹn nhận/trả hoặc đăng ký tiếp nhận xung đột, chặn cấu hình mới và chỉ rõ xung đột, không tự hủy dữ liệu.
+- Giữ cơ chế đợt/deadline đăng ký đang có trong mock cho đợt UI này; không tự xây Backend cho đợt/publish. Quyết định APPROVED là công bố trong thiết kế Backend vẫn được giữ và sai lệch mock cần được ghi rõ.
+- Notification lấy từ PENDING đang có, polling nhẹ khi tab hiển thị; không tạo hệ thống push/SignalR hoặc một bảng notification. Bấm thông báo mở đúng chi tiết, số lượng giảm sau nhận/từ chối; hủy polling khi unmount.
+- Màn từ chối có lý do bắt buộc và nút xác nhận. Cả hàng chờ lẫn cuối chi tiết dùng chung thao tác, chỉ PENDING; lưu CANCELLED + STAFF_REJECTED, lý do và thời điểm; kiểm tra lại trạng thái, hoàn suất đúng một lần.
+- Đổi role chỉ Admin; chặn hạ quyền Admin hoạt động cuối cùng. Cập nhật quyền ở mock service/auth store, xử lý phiên đang mở để không giữ quyền Admin cũ sau hạ quyền; không chỉ đổi nhãn ở danh sách. Đổi lên Admin không làm mất dấu vết chăm sóc/assignment cũ.
+- Gửi lại mã qua email snapshot của các đơn PENDING/CONFIRMED/IN_PROGRESS/READY. Public chỉ nhận cùng thông báo chung, không mã/danh sách đơn hoặc thông tin email tồn tại. Mock lưu thư vào outbox nội bộ để demo (chỉ Admin được đọc), có chống gửi dồn; không báo là đã gửi SMTP thật.
+- Seed mới có dữ liệu phục vụ kiểm tra ngày trống/đầy/nghỉ, pet lưu trú qua ngày nghỉ, vaccine và loại lông; cấu hình vaccine mặc định tắt. Dữ liệu cũ nâng dạng cộng thêm, không clear IndexedDB hoặc tự đánh dấu đã xác minh. Booking thiếu ảnh vẫn hợp lệ; chỉ cần nhân viên xử lý xác minh khi check-in nếu cấu hình bật. Không chèn ảnh giả hoặc lặng lẽ xóa đơn.
+
+### 7.2. Các bước thực hiện
+
+| Bước | File/vùng tác động dự kiến | Kết quả kiểm chứng |
+|---|---|---|
+| 1. Mock data và quy tắc nền | services/mock/seed.js, mockRepository.js, mockOperations.js; utils/bookingRules.js, pricing.js; types/mock.d.ts | Nâng dữ liệu không mất booking/Blob; policy vaccine mặc định tắt, không chặn đặt nhưng bảo vệ check-in khi bật; loại lông riêng; tính đúng suất Spa và phòng theo đêm; reservation retry không tăng hai lần. |
+| 2. Ngày nghỉ và lịch đăng ký | components/schedule/ScheduleWorkspace.vue; services/api/scheduleService.js; utils/dates.js; mock operations | Admin cấu hình tuần chưa mở, lịch chỉ rõ ngày nghỉ tiếp nhận/ca trực Hotel; click ô ca và xác nhận; thứ đứng trước ngày; không đăng ký trùng/hết hạn/nhận khách ngày nghỉ. |
+| 3. Form Customer và gửi lại Tracking | components/booking/BookingForm.vue; views/customer/CustomerTrackingView.vue; services/api/bookingService.js; stores/booking.js | Upload vaccine tùy chọn; hiển thị yêu cầu mang giấy tới quầy nếu policy bật; lịch theo loại dịch vụ, phòng/ngày và ngày nghỉ; cùng ngày trả cho mọi pet; resend không lộ mã Public hoặc tạo đơn mới. |
+| 4. Notification và xử lý booking | layouts/AppLayout.vue hoặc shared notification component; components/dashboard/OverviewWorkspace.vue; BookingWorkspace.vue; BookingDetailDialog.vue; views/admin/AdminSettingsView.vue và settings/mock service | Admin cấu hình policy vaccine; check-in có xác minh và dấu vết khi bắt buộc; PENDING có notification; nhận/từ chối cuối chi tiết, từ chối có lý do và không hoàn thêm suất khi retry. Không thay layout tổng thể. |
+| 5. Đổi role account | views/admin/AdminStaffView.vue; services/api/staffService.js; stores/auth.js; utils/permissions.js; mock operations | ADMIN ↔ STAFF, bảo vệ Admin cuối, không lưu quyền cũ sau hạ quyền, không tạo role quầy/spa mới. Kiểm tra service trực tiếp ngoài UI. |
+| 6. Tích hợp và tài liệu | tests/unit/rules.spec.js; integration/regressions.spec.js, workflows.spec.js; components/BookingForm.spec.js, Tracking.spec.js và test mới đúng vùng thay đổi; codebase-map/mapping/progress | Cập nhật test bị đổi yêu cầu và test các guard mới; kiểm tra luồng chính một lượt, build cuối. Ghi rõ giới hạn mock/SMTP và các UC còn thiếu. |
+
+### 7.3. Kiểm chứng gọn và điểm duyệt
+
+Test tập trung: thiếu vaccine vẫn đặt được ở cả policy bật/tắt; bật policy thì check-in chưa xác minh bị chặn dù có ảnh, xác minh tại quầy cho tiếp nhận; tắt policy cho check-in thiếu giấy; khách không tự giả actor xác minh; Hotel-only khi Spa hết; phòng thiếu ở đêm giữa; nhận/trả vào ngày nghỉ so với lưu trú qua ngày nghỉ; cùng lịch trả; từ chối/retry; Admin cuối và phiên sau đổi role; resend đúng email snapshot/response chung/rate limit; nâng dữ liệu cũ không mất booking/ảnh hoặc tự giả xác minh.
+
+Chạy các test liên quan sau từng phần có thay đổi, không chạy lại cả suite/browser liên tục. Cuối đợt chạy `npm run test` và `npm run build` một lần; chỉ lặp khi có sửa lỗi. Mock tests không thay kiểm thử concurrency PostgreSQL hoặc gửi SMTP thật trong Backend tương lai.
+
+Người dùng đã duyệt và đợt frontend/mock đã triển khai. Chi tiết kiểm chứng ở [frontend-update-progress.md](frontend-update-progress.md). Schema/API/Word/Figma vẫn cần cập nhật tại chặng thiết kế tương ứng; không tự tuyên bố ERD hiện có đã chứa loại lông hoặc cấu hình ngày nghỉ.
+
+- [x] Mock data/quy tắc nền và nâng dữ liệu không reset.
+- [x] Ngày nghỉ và chọn ca trực tiếp, có thứ/ngày và ca chăm sóc Hotel.
+- [x] Form Customer, lịch Spa/phòng và gửi lại Tracking qua outbox mock.
+- [x] Notification và nhận/từ chối có lý do; cấu hình/xác minh vaccine.
+- [x] Đổi ADMIN ↔ STAFF và bảo vệ Admin cuối ở service.
+- [x] Test tập trung, kiểm tra toàn suite/build và cập nhật tài liệu. Không chạy browser audit rộng.
+

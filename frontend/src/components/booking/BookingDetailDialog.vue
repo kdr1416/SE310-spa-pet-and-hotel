@@ -42,6 +42,7 @@
           />
         </div>
       </details>
+      <p class="muted mt-3">Loại lông: {{ ({ SHORT: 'Lông ngắn', LONG: 'Lông dài', OTHER: 'Khác / không lông' })[d.thuCung.loaiLong] || 'Chưa cập nhật' }}</p>
       <form
         v-if="canEdit && !d.checkedIn && booking.trangThai !== 'PENDING'"
         class="mt-4 grid gap-3 sm:grid-cols-3"
@@ -72,7 +73,12 @@
               {{ u.tenNhanVien }}
             </option>
           </select></label
-        ><button
+        >
+        <label class="flex items-start gap-2 sm:col-span-3">
+          <input v-model="checks[d.id].vaccineVerified" type="checkbox" :required="!!store.catalog.vaccinePolicy?.[d.input.type]" />
+          <span>Đã kiểm tra giấy tiêm chủng (ảnh hoặc giấy khách mang tới quầy){{ store.catalog.vaccinePolicy?.[d.input.type] ? ' — bắt buộc trước tiếp nhận' : ' — tùy chọn' }}</span>
+        </label>
+        <button
           class="btn-primary justify-self-start sm:col-span-3"
           :disabled="busy"
         >
@@ -174,6 +180,8 @@
         </div></template
       >
     </section>
+    <p v-if="booking.lyDoHuy" class="rounded-xl bg-red-50 p-4 text-red-900">Lý do từ chối: {{ booking.lyDoHuy }}</p>
+    <BookingDecisionPanel :booking="booking" @changed="emit('changed')" />
   </div>
 </template>
 <script setup>
@@ -191,6 +199,7 @@ import {
 import StoredPhoto from "@/components/shared/StoredPhoto.vue";
 import ActionFeedback from "@/components/shared/ActionFeedback.vue";
 import PaymentQrPanel from "./PaymentQrPanel.vue";
+import BookingDecisionPanel from "./BookingDecisionPanel.vue";
 const props = defineProps({ booking: Object }),
   emit = defineEmits(["changed"]),
   auth = useAuthStore(),

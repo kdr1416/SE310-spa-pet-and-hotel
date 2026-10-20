@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mount, flushPromises } from "@vue/test-utils";
 import { createPinia, setActivePinia } from "pinia";
 import BookingForm from "../../src/components/booking/BookingForm.vue";
+import { catalogService } from '../../src/services/api/catalogService';
 vi.mock("../../src/services/api/catalogService", () => ({
   catalogService: {
     catalog: vi.fn(async () => ({
@@ -32,6 +33,25 @@ vi.mock("../../src/services/api/bookingService", () => ({
 }));
 beforeEach(() => setActivePinia(createPinia()));
 describe("booking interactions", () => {
+  it('shows closed days before the Spa customer chooses a date', async () => {
+    const catalog = (await catalogService.catalog()).data;
+    catalog.roomAvailability = [{ date: '2026-10-20', closed: true, rooms: [] }];
+    catalogService.catalog.mockResolvedValueOnce({ data: catalog });
+    const w = mount(BookingForm);
+    await flushPromises();
+    const closedDay = w.findAll('button').find((b) => b.text().includes('Nghỉ tiếp nhận'));
+    expect(closedDay).toBeTruthy();
+    expect(closedDay.attributes('disabled')).toBeDefined();
+    w.unmount();
+  });
+  it('offers optional vaccine upload for Spa and a separate coat type', async () => {
+    const w = mount(BookingForm);
+    await flushPromises();
+    expect(w.get('input[type=file]').attributes('required')).toBeUndefined();
+    expect(w.text()).toContain('Ảnh giấy tiêm chủng (tùy chọn)');
+    expect(w.text()).toContain('Loại lông');
+    w.unmount();
+  });
   it("requires at least one pet and lets customer add another", async () => {
     const w = mount(BookingForm);
     await flushPromises();

@@ -1,6 +1,6 @@
 # Bản đồ codebase — PetSpa & Hotel
 
-> Cập nhật 13/10/2026 sau đợt frontend updates. Frontend mock hoạt động; Backend chưa có. Đây là mô tả source hiện tại, không phải danh sách tính năng production đã hoàn thành.
+> Cập nhật 18/10/2026 sau đợt bổ sung booking/lịch/role. Frontend mock hoạt động; Backend chưa có. Đây là mô tả source hiện tại, không phải danh sách tính năng production đã hoàn thành.
 
 ## Cấu trúc và điểm vào
 
@@ -58,14 +58,14 @@ IndexedDB `petspa-frontend-mock`, version 1, store `data`, key `state` chứa do
 ## Quy tắc chính đang có trong mock
 
 - Slot tính theo pet gốc, không theo số đơn hoặc các dòng add-on. Request ID chống tạo đơn hai lần; từ chối chỉ xử lý PENDING một lần.
-- Spa theo cân nặng, Hotel theo đêm; cắt tỉa chỉ qua combo. Hotel cần ngày trả sau nhận và ảnh giấy tiêm chủng. Việc xác nhận giấy tờ thật thuộc nhân viên/Backend.
+- Spa theo cân nặng, Hotel theo đêm; cắt tỉa chỉ qua combo. Hotel cần ngày trả sau nhận; mọi pet qua đêm có phòng và cùng lịch trả. Vaccine đính kèm tùy chọn cho mọi loại; policy xác minh mặc định tắt, Admin bật theo loại dịch vụ thì check-in yêu cầu nhân viên kiểm tra giấy và lưu actor/thời điểm.
 - Check-in chốt giá và phân công nhân viên spa hoạt động. Cân nặng cập nhật sau đó không sửa giá đã chốt hoặc cân nặng khai báo ban đầu.
 - Waiting → In Progress cần ảnh + ghi chú; Ready cần ảnh cuối. Parent READY chỉ khi tất cả chi tiết đủ điều kiện.
 - Một invoice snapshot khi all pets READY; không sửa dịch vụ/giá sau snapshot. Explicit payment mới chuyển PAID/COMPLETED. Refund là ledger riêng, không vượt tiền đã thu chưa hoàn, không duyệt cùng yêu cầu hai lần.
 - Review chỉ COMPLETED, một lần/đơn, không trả reviews qua getWorkspace của Staff. Add-on phải được quầy/Admin duyệt; queue hiển thị pet/dịch vụ/phí trước duyệt.
 - Lookup bắt buộc phone/code, lỗi chung; quá 5 lần sai trong cửa sổ 15 phút khóa thêm 15 phút. Đây không phải rate limiter server.
 - Lịch đăng ký có deadline/duplicate/capacity/overlap checks, kiểm tra lại trước publish; staff chỉ thấy published. Chỉnh giờ không làm invalid các ca đã duyệt.
-- Roles vẫn ADMIN | STAFF. workGroup RECEPTION/SPA tạm cho mock; mô hình role Backend chưa chốt. Guard và mock service đều kiểm tra quyền.
+- Roles trong source vẫn ADMIN | STAFF, workGroup RECEPTION/SPA còn dùng cho mock. Ngày 17/10 đã chốt Backend chỉ ADMIN/STAFF và quyền chăm sóc theo assignment; source mock chưa được đổi theo quyết định mới. Xem scope-and-decisions.md bên dưới, không mang workGroup thành quyền Backend.
 
 DTO live/reference ở `types/api.d.ts`, enums ở `types/api.js`; DTO frontend-only ở `types/mock.d.ts`. Không tuyên bố mock DTO là schema .NET đã xác nhận.
 
@@ -89,5 +89,18 @@ Chưa có Backend/.NET/database schema/migration, email/OTP/PIN, cloud upload, p
 IndexedDB chỉ dữ liệu theo origin/browser, có thể bị xóa theo cài đặt trình duyệt. Mock permission/password không thay bảo mật server. Giờ/lịch published được giữ nguyên; sửa lịch đã publish cần quy trình khác nếu bổ sung sau. Export hiện là browser print/PDF, không Excel.
 
 ## Dùng CodeGraph để tránh đọc lại codebase
+
+### Bổ sung frontend/mock ngày 18/10
+
+- `services/mock/bookingAvailability.js`: nâng dữ liệu cộng thêm (`featureVersion=2`, vẫn store/version IndexedDB cũ), cấu hình vaccine mặc định tắt, phòng mặc định 3 suất/loại nếu dữ liệu cũ chưa có số lượng, kiểm tra Hotel từng đêm và ngày nghỉ nhận/trả. Không clear booking/Blob. Kho mới có 2 booking demo; kho hiện hữu không bị chèn đơn mẫu.
+- `BookingForm.vue`: loại lông riêng, upload vaccine tùy chọn, lịch tiếp nhận Spa/ngày nghỉ, suất ca chỉ tính pet Spa; Hotel-only không trừ Spa, lịch phòng 14 ngày và ngày trả chung. Mock giới hạn khoảng lưu trú tối đa 366 đêm để chặn vòng lặp không giới hạn.
+- `BookingDecisionPanel.vue`: nhận/từ chối PENDING, dialog lý do/xác nhận dùng chung cho hàng chờ và cuối chi tiết. Lưu STAFF_REJECTED và nhả tài nguyên một lần; từ chối lặp cùng lý do trả kết quả cũ.
+- `BookingNotifications.vue` trong AppLayout: PENDING count/list, mở đúng mã, polling 30s khi tab hiển thị; mutation có sự kiện đồng bộ trong tab và storage event giữa tab. Refresh Auth để role mới có hiệu lực; kiểm tra quyền service vẫn là chốt chính.
+- `ScheduleWorkspace.vue`: cấu hình ngày nghỉ cho tuần chưa mở; chặn nhận/trả nhưng giữ ca HOTEL_CARE. Bấm ô ca mở xác nhận đăng ký; hiển thị thứ/ngày. Cơ chế period/published mock cũ vẫn còn, chưa đổi thành Backend APPROVED-only.
+- `AdminStaffView.vue`/`staffService.changeRole`: ADMIN ↔ STAFF, chặn hạ quyền Admin hoạt động cuối; không đổi credential, assignment hoặc log cũ. WorkGroup chỉ còn là hạn chế legacy của mock, chưa đồng bộ toàn bộ quyền STAFF với thiết kế Backend.
+- Tracking có `resendTracking`: response chung, chỉ gửi mã đơn đang mở theo email snapshot; cooldown 60s ở mock. Admin xem mail outbox tại settings; không có SMTP thật. Settings cũng cấu hình policy vaccine.
+- Kiểm chứng và các UC còn thiếu xem [frontend-update-progress.md](../design/frontend-update-progress.md) và [mapping](../requirements/frontend-use-case-mapping.md). Không coi đợt UI này đã hoàn thiện đủ core hoặc đã đồng bộ schema/API/Word/Figma.
+
+Baseline Q01–Q08/D01–D14 và T01–T09 ngày 17/10 đã chốt: [scope-and-decisions.md](../requirements/scope-and-decisions.md), [SRS 1.1](../requirements/SRS_He_Thong_Quan_Ly_Spa_Thu_Cung_AI_Readable.md), [mapping 28 mục + UC56](../requirements/frontend-use-case-mapping.md), [phân tích nghiệp vụ](../design/system-analysis.md), [thiết kế 1.0](../design/system-design.md), [API contract dự thảo](../design/api-contract.md), [traceability/lộ trình](../design/requirements-traceability.md), [kế hoạch tài liệu](../design/system-analysis-plan.md). Đây là yêu cầu/thiết kế mục tiêu, không chứng minh Backend/validation mới đã triển khai; source mock còn khác về workGroup, published, phòng, email và thanh toán/bàn giao.
 
 Bắt đầu từ file/symbol liên quan ở bảng trên; query exact path và giới hạn maxFiles. Ví dụ booking bug → BookingForm.vue + mockOperations.js + bookingRules.js; care → StaffCareTasksView.vue + careUpdate; payment → BookingDetailDialog.vue + createInvoice/confirmPayment. Xem test tương ứng. Chỉ đọc file trực tiếp khi tool thiếu đoạn source hoặc báo stale. Không quét lại toàn bộ project/skills cho một lỗi cục bộ.
