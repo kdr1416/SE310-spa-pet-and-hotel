@@ -22,7 +22,7 @@ export function validateBooking(payload, available, catalog) {
   if (!Number.isFinite(dateNumber(payload.date)) || payload.date < localDate())
     errors.push("Ngày đặt lịch không được ở quá khứ.");
   if (!payload.pets?.length) errors.push("Cần ít nhất một thú cưng.");
-  if (payload.pets?.length > available)
+  if (payload.pets?.filter((p) => p.type !== "HOTEL").length > available)
     errors.push(`Khung giờ chỉ còn ${available} chỗ trống.`);
   for (const pet of payload.pets || []) {
     if (
@@ -43,12 +43,14 @@ export function validateBooking(payload, available, catalog) {
     } catch (e) {
       errors.push(e.message);
     }
-    if (pet.type !== "SPA") {
+    if (pet.coatType && !["SHORT", "LONG", "OTHER"].includes(pet.coatType))
+      errors.push("Loại lông không hợp lệ.");
+    if (pet.vaccine) {
       try {
         validateImage(pet.vaccine);
       } catch {
         errors.push(
-          "Hotel cần ảnh giấy tiêm chủng hợp lệ (JPEG/PNG/WebP ≤ 5MB).",
+          "Ảnh giấy tiêm chủng cần JPEG/PNG/WebP ≤ 5MB.",
         );
       }
     }

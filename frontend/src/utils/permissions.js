@@ -12,7 +12,7 @@ const grants = {
   SPA: ["BOOKING_READ", "CARE_UPDATE", "SCHEDULE_SELF"],
   BASE_STAFF: ["BOOKING_READ", "SCHEDULE_SELF"],
 };
-/** workGroup is mock-only; final Backend roles remain undecided. */
+/** Legacy mock menu groups. Target Backend roles are ADMIN/STAFF with resource guards. */
 export function canAccess(user, capability) {
   if (!user || user.isActive === false) return false;
   const group =

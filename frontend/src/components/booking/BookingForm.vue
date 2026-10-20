@@ -80,6 +80,12 @@
             ><label class="label"
               >Giống<input v-model="p.breed" class="field" /></label
             ><label class="label"
+              >Loại lông<select v-model="p.coatType" class="field">
+                <option value="SHORT">Lông ngắn</option>
+                <option value="LONG">Lông dài</option>
+                <option value="OTHER">Khác / không lông</option>
+              </select></label
+            ><label class="label"
               >Cân nặng khai báo (kg) *<input
                 v-model.number="p.weight"
                 class="field"
@@ -133,25 +139,17 @@
                     {{ r.tenPhong }}
                   </option>
                 </select></label
-              ><label class="label"
-                >Ngày trả phòng *<input
-                  v-model="p.checkout"
-                  class="field"
-                  type="date"
-                  :min="checkoutMin"
-                  required /></label
-              ><label class="label sm:col-span-2"
-                >Ảnh giấy tiêm chủng *<input
+              ></template>
+              <label class="label sm:col-span-2"
+                >Ảnh giấy tiêm chủng (tùy chọn)<input
                   class="field"
                   type="file"
                   accept="image/jpeg,image/png,image/webp"
-                  required
                   @change="pickVaccine(p, $event)"
                 /><span class="muted"
-                  >JPEG/PNG/WebP ≤ 5MB. Nhân viên sẽ kiểm tra giấy tờ khi tiếp
-                  nhận.</span
+                  >JPEG/PNG/WebP ≤ 5MB. Bạn có thể mang giấy tới quầy.
+                  {{ store.catalog.vaccinePolicy?.[p.type] ? 'Dịch vụ này yêu cầu nhân viên xác minh lúc check-in.' : 'Hiện không bắt buộc xác minh vaccine.' }}</span
                 ></label
-              ></template
             >
             <label class="label sm:col-span-2"
               >Ghi chú sức khỏe<textarea
@@ -180,12 +178,37 @@
                 v-for="s in store.catalog.availability"
                 :key="s.id"
                 :value="s.id"
-                :disabled="s.left < form.pets.length"
+                :disabled="(spaPetCount > 0 && s.left < spaPetCount) || !!store.catalog.closedDays?.[form.date] || s.isActive === false"
               >
-                {{ s.tenCa }} · {{ s.left }} chỗ
+                {{ s.tenCa }} · {{ spaPetCount ? `${s.left} suất Spa` : 'Hẹn bàn giao Hotel · không trừ slot Spa' }}
               </option>
             </select></label
           >
+          <label v-if="hasHotelPets" class="label sm:col-span-2">Ngày trả chung cho mọi bé *
+            <input v-model="form.checkout" type="date" class="field" :min="checkoutMin" required />
+          </label>
+        </div>
+        <p v-if="store.catalog.closedDays?.[form.date] || (hasHotelPets && store.catalog.closedDays?.[form.checkout])" class="mt-3 text-sm text-red-800" role="alert">Ngày đã chọn nghỉ tiếp nhận/nhận–trả. Vui lòng chọn ngày khác.</p>
+        <p v-if="mixedPets" class="mt-3 text-sm text-red-800" role="alert">Đơn qua đêm cần phòng cho mọi bé. Hãy tách bé Spa đón trong ngày thành đơn riêng.</p>
+        <div v-if="!hasHotelPets && store.catalog.roomAvailability?.length" class="mt-5">
+          <h3>Lịch tiếp nhận Spa · 14 ngày</h3>
+          <div class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            <button v-for="day in store.catalog.roomAvailability" :key="day.date" type="button" class="rounded-xl border border-primary-100 p-3 text-left text-sm disabled:bg-stone-100 disabled:text-stone-500" :disabled="day.closed" @click="form.date = day.date">
+              <strong>{{ weekdayLabel(day.date) }}</strong><span class="mt-1 block">{{ day.closed ? 'Nghỉ tiếp nhận' : 'Chọn để xem chỗ theo ca' }}</span>
+            </button>
+          </div>
+        </div>
+        <div v-if="hasHotelPets && store.catalog.roomAvailability?.length" class="mt-5">
+          <h3>Phòng còn theo từng đêm · 14 ngày từ ngày nhận</h3>
+          <p class="muted mt-2">Ngày trả không tính thêm đêm. Ngày nghỉ chỉ ngừng nhận–trả, vẫn chăm sóc các bé lưu trú. Số phòng là tham khảo và được kiểm tra lại khi đặt.</p>
+          <div class="table-wrap mt-3 max-h-80 overflow-auto">
+            <table><thead><tr><th>Ngày</th><th v-for="r in store.catalog.rooms" :key="r.id">{{ r.tenPhong }}</th><th>Tiếp nhận</th></tr></thead>
+              <tbody><tr v-for="day in store.catalog.roomAvailability" :key="day.date">
+                <td><button type="button" class="font-bold text-primary-800 disabled:text-stone-400" :disabled="day.closed" @click="form.date = day.date">{{ weekdayLabel(day.date) }}</button></td>
+                <td v-for="r in store.catalog.rooms" :key="r.id">{{ day.rooms.find((v) => v.id === r.id)?.left ?? 0 }} phòng</td>
+                <td>{{ day.closed ? 'Nghỉ nhận–trả' : 'Nhận khách' }}</td>
+              </tr></tbody></table>
+          </div>
         </div>
       </section>
     </div>
@@ -214,7 +237,7 @@
       <ActionFeedback :busy="busy" :error="error" /><button
         class="btn-accent w-full"
         type="submit"
-        :disabled="busy || !store.catalog.availability.length"
+        :disabled="busy || !store.catalog.availability.length || mixedPets"
       >
         {{ busy ? "Đang lưu…" : "Xác nhận đặt lịch" }}
       </button>
@@ -232,7 +255,7 @@ import {
 } from "@/services/api/bookingService";
 import { estimateBooking } from "@/utils/pricing";
 import { validateBooking, validateImage } from "@/utils/bookingRules";
-import { localDate, addDays } from "@/utils/dates";
+import { localDate, addDays, weekdayLabel } from "@/utils/dates";
 import { formatCurrency } from "@/utils/formatters";
 import ActionFeedback from "@/components/shared/ActionFeedback.vue";
 const props = defineProps({ internal: Boolean }),
@@ -244,6 +267,7 @@ const form = reactive({
   requestId: crypto.randomUUID(),
   customer: { name: "", phone: "", email: "" },
   date: today,
+  checkout: addDays(today, 1),
   shiftId: 1,
   pets: [],
 });
@@ -253,6 +277,7 @@ function addPet() {
     name: "",
     species: "CHO",
     breed: "",
+    coatType: "SHORT",
     weight: 5,
     type: "SPA",
     serviceId:
@@ -272,10 +297,13 @@ function choose(p, v) {
   p.comboId = type === "combo" ? Number(id) : null;
   p.serviceId = type === "service" ? Number(id) : null;
 }
-const checkoutMin = computed(() => addDays(form.date || today, 1)),
+const hasHotelPets = computed(() => form.pets.some((p) => p.type !== "SPA")),
+  spaPetCount = computed(() => form.pets.filter((p) => p.type !== "HOTEL").length),
+  mixedPets = computed(() => hasHotelPets.value && form.pets.some((p) => p.type === "SPA")),
+  checkoutMin = computed(() => addDays(form.date || today, 1)),
   price = computed(() => {
     try {
-      return estimateBooking(form, store.catalog);
+      return estimateBooking({ ...form, pets: form.pets.map((p) => ({ ...p, checkout: form.checkout })) }, store.catalog);
     } catch {
       return { items: [], total: 0 };
     }
@@ -294,14 +322,18 @@ function pickVaccine(p, e) {
 onMounted(() => perform(() => store.loadCatalog(form.date)));
 watch(
   () => form.date,
-  () => perform(() => store.loadCatalog(form.date)),
+  () => {
+    if (!form.date) return;
+    if (form.checkout <= form.date) form.checkout = addDays(form.date, 1);
+    perform(() => store.loadCatalog(form.date));
+  },
 );
 async function submit() {
   await perform(async () => {
     const payload = {
       ...toRaw(form),
       customer: { ...toRaw(form.customer) },
-      pets: form.pets.map((p) => ({ ...toRaw(p) })),
+      pets: form.pets.map((p) => ({ ...toRaw(p), checkout: form.checkout })),
     };
     const available =
       store.catalog.availability.find((s) => s.id === form.shiftId)?.left || 0;

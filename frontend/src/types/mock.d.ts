@@ -11,6 +11,7 @@ export interface PetBookingInput {
   name: string;
   species: LoaiPet;
   breed?: string;
+  coatType?: "SHORT" | "LONG" | "OTHER";
   weight: number;
   type: LoaiDon;
   serviceId?: number | null;
@@ -49,12 +50,14 @@ export interface MockBookingDetail {
     giongLoai: string;
     canNangDangKy: number;
     ghiChuDiUng: string;
+    loaiLong?: "SHORT" | "LONG" | "OTHER" | null;
   };
   donGiaChot: number;
   canNangThucTe?: number;
   tinhTrangLong?: string;
   nhanVienId: number | null;
   checkedIn: boolean;
+  vaccineVerification?: { by: number; at: string };
   trangThaiChamSoc: TrangThaiChamSoc;
   nhatKyChamSoc: MockCareLog[];
   laDichVuThem: boolean;
@@ -88,6 +91,12 @@ export interface MockBooking {
   thoiGianBatDau: string;
   tongTienTamTinh: number;
   ghiChuKhach?: string;
+  endDate?: string;
+  bookingEmail?: string;
+  loaiHuy?: "STAFF_REJECTED";
+  lyDoHuy?: string;
+  huyAt?: string;
+  nguoiHuyId?: number;
   chiTietDonList: MockBookingDetail[];
   hoaDon: MockInvoice | null;
   createdAt: string;
@@ -114,6 +123,7 @@ export interface MockRegistration {
   date: string;
   shiftId: number;
   status: "PENDING" | "APPROVED" | "REJECTED";
+  purpose?: "RECEPTION" | "HOTEL_CARE";
   createdAt: string;
 }
 export interface MockPeriod {
@@ -124,5 +134,13 @@ export interface MockPeriod {
   capacity: number;
   open: boolean;
   published: boolean;
+  openedAt?: string | null;
+}
+export type MockVaccinePolicy = Record<LoaiDon, boolean>;
+export interface MockMail {
+  id: string;
+  to: string;
+  trackingCodes: string[];
+  createdAt: string;
 }
 export type MockUser = AuthUser & { workGroup: "RECEPTION" | "SPA" };

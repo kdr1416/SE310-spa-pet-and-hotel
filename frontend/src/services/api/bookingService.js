@@ -13,8 +13,9 @@ export const bookingService = service(
     "confirmPayment",
     "customerRequest",
     "reviewRequest",
+    "resendTracking",
   ],
-  ["lookupBooking", "customerRequest"],
+  ["lookupBooking", "customerRequest", "resendTracking"],
 );
 export const createCustomerBooking = (payload) =>
   callOperation("createBooking", payload, true);

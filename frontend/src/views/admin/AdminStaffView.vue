@@ -3,8 +3,8 @@
     <section class="panel">
       <h2>Tạo tài khoản nhân viên mock</h2>
       <p class="muted mt-2">
-        Role vẫn STAFF. Nhóm quầy/spa chỉ dùng để mô phỏng menu và quyền, chưa
-        quyết định mô hình Backend.
+        Tài khoản mới có role STAFF. Admin có thể đổi ADMIN ↔ STAFF bên dưới.
+        Nhóm quầy/spa chỉ còn là phân nhóm mô phỏng của giao diện hiện tại.
       </p>
       <form class="mt-5 grid gap-4 md:grid-cols-2" @submit.prevent="create">
         <label class="label"
@@ -52,6 +52,7 @@
               <th>Username</th>
               <th>Nhóm</th>
               <th>Trạng thái</th>
+              <th>Role</th>
               <th>Thao tác</th>
             </tr>
           </thead>
@@ -70,6 +71,12 @@
               </td>
               <td>{{ u.isActive ? "Hoạt động" : "Đã khóa" }}</td>
               <td>
+                <label class="label"><span class="sr-only">Role của {{ u.tenNhanVien }}</span>
+                  <select v-model="roles[u.id]" class="field"><option value="ADMIN">ADMIN</option><option value="STAFF">STAFF</option></select>
+                </label>
+                <button class="btn mt-2" :disabled="busy || roles[u.id] === u.vaiTro" @click="roleTarget = u">Lưu role</button>
+              </td>
+              <td>
                 <button
                   v-if="u.vaiTro !== 'ADMIN'"
                   class="btn"
@@ -84,20 +91,31 @@
         </table>
       </div>
     </section>
+    <Dialog v-model:visible="roleDialog" modal header="Xác nhận đổi quyền tài khoản" :style="{ width: '30rem', maxWidth: '95vw' }">
+      <p v-if="roleTarget">Đổi {{ roleTarget.tenNhanVien }} sang <strong>{{ roles[roleTarget.id] }}</strong>? Quyền mới có hiệu lực với phiên đang mở. Luôn phải còn một Admin hoạt động.</p>
+      <ActionFeedback :error="error" />
+      <div class="mt-5 flex justify-end gap-2"><button class="btn" :disabled="busy" @click="roleTarget = null">Quay lại</button><button class="btn-primary" :disabled="busy" @click="changeRole">Xác nhận</button></div>
+    </Dialog>
   </div>
 </template>
 <script setup>
-import { ref, reactive, onMounted } from "vue";
+import { ref, reactive, onMounted, computed } from "vue";
+import Dialog from 'primevue/dialog';
+import { useAuthStore } from '@/stores/auth';
 import { staffService } from "@/services/api/staffService";
 import { hashMockPassword } from "@/utils/mockCredentials";
 import { useAction } from "@/composables/useAction";
 import ActionFeedback from "@/components/shared/ActionFeedback.vue";
 const users = ref([]),
+  auth = useAuthStore(),
+  roles = reactive({}), roleTarget = ref(null),
+  roleDialog = computed({ get: () => !!roleTarget.value, set: (v) => { if (!v) roleTarget.value = null; } }),
   form = reactive({ name: "", username: "", workGroup: "RECEPTION" }),
   password = ref(""),
   { busy, error, message, perform } = useAction();
 async function get() {
   users.value = (await staffService.getStaff()).data;
+  for (const u of users.value) roles[u.id] = u.vaiTro;
 }
 async function load() {
   await perform(get);
@@ -118,5 +136,14 @@ async function toggle(u) {
     await staffService.toggleStaff({ id: u.id });
     await get();
   }, "Đã cập nhật nhân viên.");
+}
+async function changeRole() {
+  await perform(async () => {
+    const target = roleTarget.value;
+    await staffService.changeRole({ id: target.id, role: roles[target.id] });
+    roleTarget.value = null;
+    await auth.initAuth();
+    if (auth.isAdmin) await get();
+  }, 'Đã cập nhật quyền tài khoản.');
 }
 </script>

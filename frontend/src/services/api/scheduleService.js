@@ -6,4 +6,5 @@ export const scheduleService = service([
   "registerShift",
   "reviewShift",
   "publishSchedule",
+  "updateClosedDays",
 ]);

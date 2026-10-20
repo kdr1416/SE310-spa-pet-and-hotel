@@ -36,6 +36,17 @@
         :message="message"
       />
     </section>
+    <details class="panel">
+      <summary class="cursor-pointer font-bold">Bạn quên mã lịch hẹn?</summary>
+      <form class="mt-4 grid items-end gap-3 sm:grid-cols-[1fr_auto]" @submit.prevent="resend">
+        <label class="label" for="resend-email">Email đã dùng khi đặt lịch
+          <input id="resend-email" v-model="resendEmail" type="email" class="field" maxlength="150" required autocomplete="email" />
+        </label>
+        <button class="btn-primary" :disabled="resending || cooldown > 0">{{ cooldown ? `Thử lại sau ${cooldown}s` : 'Gửi lại mã' }}</button>
+      </form>
+      <p class="muted mt-3">Chỉ gửi các mã lịch hẹn chưa hoàn tất về email đã đăng ký. Bản mock không gửi email thật.</p>
+      <p v-if="resendMessage" class="mt-3 text-sm" role="status">{{ resendMessage }}</p>
+    </details>
     <div
       v-if="booking"
       data-testid="tracking-result"
@@ -270,6 +281,20 @@ const route = useRoute(),
   verified = ref(null),
   catalog = ref({ services: [] }),
   { busy, error, message, perform } = useAction();
+const resendEmail = ref(''), resendMessage = ref(''), resending = ref(false), cooldown = ref(0);
+let cooldownTimer;
+async function resend() {
+  if (resending.value || cooldown.value) return;
+  resending.value = true;
+  try {
+    const result = await bookingService.resendTracking({ email: resendEmail.value });
+    resendMessage.value = result.data.message;
+    cooldown.value = 60;
+    cooldownTimer = setInterval(() => { if (--cooldown.value <= 0) clearInterval(cooldownTimer); }, 1000);
+  } catch {
+    resendMessage.value = 'Không thể xử lý lúc này. Vui lòng thử lại sau.';
+  } finally { resending.value = false; }
+}
 const booking = computed(() => store.currentBooking),
   canAddon = computed(
     () =>
@@ -321,6 +346,7 @@ const timer = setInterval(() => {
   if (!document.hidden && verified.value && !busy.value) refresh();
 }, 10000);
 onBeforeUnmount(() => {
+  clearInterval(cooldownTimer);
   clearInterval(timer);
   store.currentBooking = null;
 });

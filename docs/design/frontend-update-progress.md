@@ -1,5 +1,24 @@
 # Progress — frontend-update-plan.md
 
+## Đợt bổ sung 18/10/2026 — hoàn tất frontend/mock mục 7
+
+- Plan/spec: frontend-update-plan.md mục 7; scope-and-decisions.md D15–D19, gồm thay đổi vaccine configurable tại check-in. Người dùng đã duyệt triển khai.
+- Nhánh: `codex/frontend-booking-schedule-updates`. Làm trong checkout hiện tại để giữ nguyên tài liệu chưa commit; không tạo worktree, không commit/push hoặc thay Backend/migration. Các ghi chép 13/10 bên dưới là lịch sử, không mô tả trạng thái Git hiện tại.
+- Hoàn tất 6 bước: migration cộng thêm/seed demo và capacity; ngày nghỉ/đăng ký ca; Customer booking/resend; notification/nhận–từ chối/policy vaccine; đổi role; kiểm chứng và tài liệu.
+- Ruling: giữ IndexedDB version/store cũ, thêm featureVersion=2; không reset hoặc tự chèn booking vào kho đang dùng. Kho mới có seed demo riêng, unit fixtures mặc định vẫn rỗng. Room quantity chưa có mặc định 3 suất/loại và được giữ nguyên nếu đã cấu hình.
+- Ruling: không đổi toàn bộ legacy workGroup/published trong đợt UI; hai sai lệch này vẫn ở backlog Backend/tích hợp. Không tự triển khai những UC thiếu ngoài đợt đã duyệt.
+- Ruling: Admin chỉ cấu hình ngày nghỉ trong tuần chưa mở; cả ca chăm sóc Hotel được biểu diễn bằng purpose=HOTEL_CARE. Khóa lại form không xóa dấu đã từng mở. Tồn phòng vẫn đếm qua ngày nghỉ.
+- Ruling: gửi lại mã dùng bookingEmail snapshot, không email master mới; cooldown 60s, response chung và outbox chỉ Admin. Mock không có SMTP hoặc chống abuse ở quy mô server.
+- Ruling: lịch hiển thị 14 ngày; kiểm tra đặt phòng theo toàn khoảng, tối đa 366 đêm để giới hạn vòng lặp client. Đây là giới hạn mock, chưa phải yêu cầu thời gian lưu trú của Backend.
+- RED: 10 test mới thất bại đúng các tính năng còn thiếu (vaccine/capacity/lý do/role/holiday/resend). GREEN: 10/10 sau phần mock. Nhóm mở rộng có 13 integration tests, bảo vệ cả migration/Blob và ảnh upload không tự xác minh.
+- Phát hiện/fix: seed Spa có thể trùng ca 0 suất vào Chủ nhật khi ngày mai là thứ Hai; đã tái hiện bằng test demo store và chuyển lịch mẫu sang thứ Ba. Test seed/store sau sửa PASS.
+- Kiểm chứng toàn bộ: `npm run test` PASS, 12 files / 55 tests. Sau đó thêm hiển thị ngày nghỉ chủ động cho Spa và chạy `npm run test -- tests/components/BookingForm.spec.js` PASS 4/4; không lặp full suite cho thay đổi cục bộ này.
+- Build cuối: `npm run build` PASS, 1985 modules. Kiểm tra Vue SFC trực tiếp trước đó: 9 file PASS. `git diff --check` PASS. Không chạy browser/viewport audit rộng; không khẳng định đã QA trực quan toàn ứng dụng.
+- Source/tài liệu liên quan: bookingAvailability.js; mockOperations/repository/seed; BookingForm/DecisionPanel/Notifications; ScheduleWorkspace; AdminStaff/Settings; Tracking; service adapters/types; codebase-map và frontend-use-case-mapping.
+- Hạn chế: vẫn chỉ frontend/mock, chưa PostgreSQL/Supabase/SMTP/VietQR thật. Schema/API/Word/Figma chưa tự đồng bộ toàn bộ các field mới. Các UC thiếu ngoài đợt này vẫn giữ trong mapping.
+
+## Lịch sử 13/10/2026
+
 13/10/2026. Implementation approved. Workspace has no Git repository; implemented in the supplied frontend without commits, worktrees or Backend changes. This ledger remains for handoff.
 
 ## Rulings
