@@ -1,0 +1,37 @@
+name: 🚀 Feature Task
+description: Đề xuất hoặc giao một task phát triển tính năng mới cho thành viên
+title: "[FEAT]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ### Hướng dẫn tạo Task phát triển
+        Mọi task phát triển đều phải gắn với Use Case hoặc API Contract đã được phê duyệt.
+  - type: textarea
+    id: goal
+    attributes:
+      label: Mục tiêu & Nghiệp vụ (Goal)
+      description: Mô tả tính năng cần phát triển và nghiệp vụ liên quan
+      placeholder: "Ví dụ: Triển khai API đặt lịch booking cho khách hàng vãng lai (UC02)..."
+    validations:
+      required: true
+  - type: input
+    id: contract_ref
+    attributes:
+      label: API Contract / Thiết kế tham chiếu
+      description: Tệp hoặc endpoint quy định interface
+      placeholder: "docs/design/api-contract.md -> POST /api/bookings"
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance_criteria
+    attributes:
+      label: Tiêu chí nghiệm thu (Acceptance Criteria / DoD)
+      description: Điều kiện để coi task là hoàn thành
+      value: |
+        - [ ] API trả về đúng format DTO và HTTP Status code theo đặc tả
+        - [ ] Có Unit Test / Integration Test với xUnit bao phủ case thành công và validation failure
+        - [ ] Kiểm thử tích hợp chạy pass trên CI
+    validations:
+      required: true

@@ -1,0 +1,30 @@
+name: 🐛 Bug Report
+description: Báo cáo lỗi kỹ thuật hoặc mâu thuẫn dữ liệu / tích hợp
+title: "[BUG]: "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Mô tả lỗi
+      description: Mô tả rõ hành vi thực tế khác gì so với kỳ vọng
+      placeholder: "Khi gửi payload booking thiếu SĐT, API trả về 500 thay vì 400 Bad Request..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Các bước tái hiện (Steps to Reproduce)
+      placeholder: |
+        1. Gửi request POST tới /api/...
+        2. Dữ liệu payload: {...}
+        3. Quan sát response nhận được
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Kỳ vọng đúng theo đặc tả
+      placeholder: "Hệ thống phải trả về lỗi 400 kèm message: 'SoDienThoai khong hop le'..."
+    validations:
+      required: true

@@ -75,6 +75,26 @@ Before substantial multi-step work, break it into small steps that can be verifi
 
 Follow my latest request and project-specific conventions. Use this file as the default when no more specific instruction applies. If a material conflict arises, explain it before proceeding.
 
+## Technical Architecture & AI Guardrails
+
+- **Backend Architecture:** Pragmatic .NET Web API (`backend/PetSpa.sln`), layered into `PetSpa.Core` (domain/DTOs/interfaces), `PetSpa.Api` (controllers/EF Core/migrations), `PetSpa.Tests` (xUnit tests). Avoid CQRS, MediatR, or speculative abstractions.
+- **Single Source of Truth:** Code generation must strictly align with `docs/design/api-contract.md` (routes, DTOs, response schemas) and `docs/requirements/scope-and-decisions.md` (business decisions D01-D19, Q01-Q08).
+- **Testing:** Mandatory xUnit test coverage for all new endpoints using `WebApplicationFactory<Program>` in `backend/tests/PetSpa.Tests`.
+- **Database:** PostgreSQL on Neon. Connection pooling on port 6543 for runtime; direct connection on port 5432 for EF migrations. Never hardcode credentials.
+- **Detailed Agent Rules:** See `.codex/instructions.md` for tool-specific instructions.
+
+## Skill Routing & Lazy Context Loading (Anti-Context-Bloat)
+
+NEVER read all files in `docs/` at once. Identify the task type first, load the matching skill in `.agents/skills/`, and read ONLY the required canonical doc sections on-demand:
+
+| Task Type | Trigger / Command | Skill to Load First | Canonical Docs to Read (On-Demand Only) |
+| :--- | :--- | :--- | :--- |
+| **Spec Audit & Drift Check** | `/egm:egm-review` or `/egm:egm-drift-report` | Global EGM Plugin | Target section in `docs/design/api-contract.md` + `docs/requirements/scope-and-decisions.md` |
+| **Task Planning & Breakdown** | `/plan`, plan task, chia việc | `.agents/skills/writing-plans` | Target feature use case in `docs/requirements/` + route in `docs/design/api-contract.md` |
+| **Backend & Test Implementation** | TDD, implement API, xUnit, fix test | `.agents/skills/test-driven-development` | Target endpoint schema in `docs/design/api-contract.md` + matching rule (`D01–D19`) |
+| **PR & Code Review** | `/review`, review PR, check diff | `.agents/skills/requesting-code-review` | Changed endpoints in `docs/design/api-contract.md` + `docs/requirements/scope-and-decisions.md` |
+| **Bug / Exception Investigation** | debug, test fail, exception, 500 error | `.agents/skills/systematic-debugging` | Error stack trace + targeted source file only |
+
 <!-- CODEGRAPH_START -->
 ## CodeGraph
 

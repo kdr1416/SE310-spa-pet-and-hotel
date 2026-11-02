@@ -7,6 +7,9 @@ dist/
 frontend/dist/
 dist-ssr/
 
+# Archive & Non-production files
+archive/
+
 # AI Agent & Local Intelligence caches
 .agents/
 .codegraph/
