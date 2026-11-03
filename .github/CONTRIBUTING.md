@@ -138,3 +138,45 @@ Khi mở PR trên GitHub:
 - **Trách nhiệm con người:** AI agent chỉ là công cụ hỗ trợ sinh mã. Thành viên tạo PR phải tự chịu trách nhiệm giải trình và hiểu từng dòng code được merge vào hệ thống.
 - **Không phá vỡ hợp đồng:** Tuyệt đối không để AI tự ý sửa đổi tên trường JSON hoặc route API khác với `docs/design/api-contract.md`.
 - **Kiểm thử trước tiên:** Mọi mã nguồn do AI tạo ra đều phải có unit test đi kèm để kiểm chứng hành vi thực tế.
+
+### 8.1 Điểm vào chung cho Codex và Antigravity
+
+Khi giao Issue cho agent, yêu cầu đọc theo thứ tự:
+
+1. `AGENTS.md` ở root repo.
+2. Tài liệu này và [backend/README.md](../backend/README.md) để biết quy trình, vị trí file và môi trường test.
+3. Issue được giao, phần tương ứng trong [kế hoạch Sprint 1](../docs/plans/sprint-1-core-plan.md) và [chi tiết Issues](../docs/plans/github-issues-sprint-1.md).
+4. Chỉ các mục contract, thiết kế và quyết định nghiệp vụ liên quan đến Issue; không đọc toàn bộ `docs/` một lượt.
+
+Các file được Git theo dõi ở trên là hướng dẫn chung cho nhóm. Cấu hình agent cục bộ như `.codex/instructions.md` không thay thế chúng và không bắt buộc các thành viên phải dùng cùng công cụ. Nếu agent không tự đọc `AGENTS.md`, thành viên phải chỉ rõ file này trong prompt.
+
+---
+
+## 9. Ownership và phối hợp để giảm conflict
+
+### 9.1 Phạm vi mỗi Issue
+
+- Người nhận Issue ghi vào mô tả Issue: module/file dự kiến sửa, DTO/service sẽ cung cấp hoặc sử dụng, phụ thuộc phải merge trước và cách kiểm thử. Phân công Lead/Dev A/B/C theo kế hoạch Sprint 1; vị trí file theo backend README.
+- Tạo nhánh sau khi các Issue tiên quyết đã merge vào `develop`. Khi còn chờ, có thể chuẩn bị test case/DTO theo contract, nhưng không tự coi code trên nhánh chưa merge là nền tảng đã ổn định.
+- Mỗi người sửa module mình phụ trách; nếu cần đổi interface hoặc logic thuộc module khác, trao đổi với người phụ trách và ghi quyết định vào Issue trước. Ownership là trách nhiệm phối hợp, không phải mỗi module có database riêng.
+- Giữ PR tập trung theo Issue; không format toàn solution, đổi tên/di chuyển file hàng loạt hoặc sửa tiện code ngoài phạm vi. Các thay đổi nền tảng dùng chung nên tách thành PR nhỏ để merge trước, rồi các nhánh phụ thuộc rebase.
+
+### 9.2 File dùng chung
+
+| Vùng dễ conflict | Người điều phối | Cách thay đổi |
+|---|---|---|
+| `Program.cs`, DI, middleware, cấu hình authentication | Tech Lead | Thành viên nêu đăng ký/cấu hình cần thêm trong Issue; Lead thống nhất người thực hiện. Giữ thay đổi nhỏ, không thay pipeline ngoài phạm vi. |
+| `.csproj`, package/tool versions, `.github/workflows/` | Tech Lead | Nêu nhu cầu và ảnh hưởng trước khi thêm dependency hoặc đổi CI; không tự nâng version từ một Issue tính năng. |
+| `Core/Common`, DTO/interface nhiều module sử dụng | Chủ module cung cấp, Lead điều phối | Chốt tên, input/output, lỗi và transaction trước khi các nhánh sử dụng; không tạo các bản trùng nhau để né conflict. |
+| Test factory/fixture và cấu hình test dùng chung | Tech Lead hoặc người được giao | Thống nhất phạm vi ảnh hưởng; test từng module vẫn do người làm tính năng phụ trách. |
+| Entity, DbContext, Configuration, Migrations | Tech Lead | Tuân thủ Schema Amendment Protocol ở mục 6; PR tính năng không tự sửa schema. |
+| API contract và quyết định nghiệp vụ | Tech Lead tổng hợp để nhóm duyệt | Báo điểm không khớp; không tự sửa contract để hợp thức hóa implementation. |
+
+Các vai trò trên là quy ước phối hợp và review, chưa phải cơ chế tự động chặn sửa file trên GitHub. Không thay thế số lượt Approve và CI ở mục 5.
+
+### 9.3 Khi cập nhật nhánh và xử lý conflict
+
+- Fetch/rebase theo mục 1 trước khi push. Chỉ bắt đầu khi working tree sạch hoặc đã chủ động lưu công việc; không dùng `reset --hard`, `clean` hoặc checkout đè file để làm sạch thay người khác.
+- Khi conflict, đọc cả hai thay đổi và trao đổi với người phụ trách nếu liên quan logic/contract. Không chọn toàn bộ `ours`/`theirs` để bỏ qua phần code chưa hiểu. Sau khi giải quyết, kiểm tra diff và chạy lại build/test liên quan trên kết quả đã ghép.
+- Không force-push `develop`/`main` hoặc nhánh của thành viên khác. Nếu rebase nhánh cá nhân đã push cần cập nhật lịch sử remote, chỉ dùng `--force-with-lease` sau khi xác nhận không có người khác cùng làm trên nhánh đó.
+- Trước khi đề nghị review, mô tả rõ các file chung đã sửa và việc phối hợp trong PR; chưa chạy check nào thì ghi rõ, không đánh dấu pass thay CI.
