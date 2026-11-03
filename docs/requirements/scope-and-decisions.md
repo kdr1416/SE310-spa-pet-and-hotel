@@ -1,5 +1,9 @@
 # Phạm vi và quyết định nghiệp vụ — baseline đã chốt
 
+**M2: APPROVED / BASELINE LOCKED — 03/11/2026.** Nhóm trưởng xác nhận “mình chốt 6 file .md đều ổn cả rồi”. M2-15 ghi nhận phê duyệt trọn gói tài liệu, không phải kết quả chạy code/tests hoặc lệnh triển khai.
+
+**Ưu tiên M2 (03/11/2026):** mục 6 ghi các quyết định mới được người dùng duyệt. Nội dung D/Q/T cũ trái với mục 6 chỉ giữ để truy vết, không dùng sinh code. SRS v3.0 và bổ sung M2 thay baseline SRS 1.1.
+
 **Ngày cập nhật:** 18/10/2026. **Trạng thái:** người dùng đã xác nhận D01–D14, Q01–Q08, T01–T09 và bổ sung D15–D19 ở mục 5. Phần bổ sung mới ưu tiên khi khác baseline cũ; frontend/mock mục 7 đã được duyệt và triển khai. Chưa triển khai Backend/migration; xem progress cho kiểm chứng và giới hạn.
 
 **Mục đích:** lưu quyết định và nguồn thay đổi. [SRS](SRS_He_Thong_Quan_Ly_Spa_Thu_Cung_AI_Readable.md) là bản yêu cầu chuẩn hóa; [system-analysis.md](../design/system-analysis.md) là phân tích nghiệp vụ để duyệt trước thiết kế vật lý/API. Không phải bằng chứng Backend đã được triển khai.
@@ -114,3 +118,35 @@ Các yêu cầu UI đi kèm: lịch Spa theo suất ca; Hotel theo phòng/ngày 
 Đề xuất bảo vệ khi triển khai, chưa phải yêu cầu người dùng tự nêu: giữ ít nhất một Admin hoạt động; đổi role phải có hiệu lực ở service/phiên mock, không chỉ đổi nhãn; không đánh dấu ngày nghỉ mới làm vô hiệu booking/lịch đã cam kết. Trường hợp xung đột phải báo rõ để Admin xử lý trước.
 
 [Kế hoạch frontend mục 7](../design/frontend-update-plan.md) mô tả phạm vi thực hiện. SRS Markdown đã ghi bổ sung; schema/API draft, Word và Figma cần đồng bộ sau khi chọn cách lưu loại lông/ngày nghỉ và hợp đồng thao tác mới. Không coi ERD 20 bảng cũ là đã phản ánh đủ D15–D19.
+
+<a id="m2-decisions"></a>
+
+## 6. Bổ sung Milestone 2 — ngày 03/11/2026
+
+Nguồn: các quyết định được nhóm trưởng xác nhận trong cuộc trao đổi thiết kế M2. Bảng này ghi nghiệp vụ đã duyệt, không mặc nhiên duyệt mọi cột/route kỹ thuật mới. Không thay source code hoặc chạy migration trong lượt tài liệu này.
+
+| Mã | Quyết định đã duyệt | Thay thế/giới hạn |
+|---|---|---|
+| M2-01 | Thiết kế chi tiết cả OTP, cọc Hotel 30%, giữ chỗ 30 phút trong milestone này. | Thay phạm vi cũ loại cọc/hoàn cọc. Extension vẫn có cấu hình bật/tắt và snapshot phần áp dụng mỗi booking. |
+| M2-02 | Nhân viên xác nhận cọc thủ công sau kiểm tra tiền thực nhận; Admin thực hiện hoàn thủ công. | Không webhook; chỉ ghi Đã hoàn sau thực trả, có số tiền, thời gian và chứng từ/tham chiếu. |
+| M2-03 | Không truy thu phụ phí đón trễ mới phát sinh sau PAID; ghi lý do miễn và dấu vết đối soát. | Không sửa invoice PAID, không thêm chứng từ thu bổ sung cho khoản này. Pet chưa nhận vẫn chưa DONE. |
+| M2-04 | Đơn còn >=1 pet không bị hủy: COMPLETED khi invoice PAID và mọi pet không hủy DONE; pet hủy giữ CANCELLED. | Thay điều kiện mọi pet phải DONE theo nghĩa bao gồm cả pet đã hủy. Phần dịch vụ pet hủy phải được quyết toán. |
+| M2-05 | Toàn bộ pet bị hủy: cho lập invoice phần đã làm; đơn đang phục vụ giữ IN_PROGRESS đến khi quyết toán, xử lý xong cọc/hoàn và trả đủ pet, rồi CANCELLED. | Pet giữ CANCELLED; ghi trả lại thực tế riêng, không đổi giả thành DONE. Nếu chưa phục vụ và không phải thu thì xử lý hủy trước tiếp nhận bình thường. |
+| M2-06 | Cọc = 30% × (phòng + mọi Spa/Combo đặt ban đầu toàn đơn), kể cả pet chỉ Spa trong đơn hỗn hợp. | Không gồm phát sinh về sau; snapshot khi đặt, không tính lại do check-in đổi size. Thay Q03 cũ cấm đơn có pet Spa-only cùng pet Hotel. Không mặc định mọi pet trong đơn có Hotel đều cần phòng. |
+| M2-07 | Cọc dư sau hủy riêng được hoàn chênh lệch sau khấu trừ phần thực phải thu toàn đơn. | Không tự phạt giữ cọc như hủy toàn đơn muộn/no-show; không vừa khấu trừ vừa hoàn cùng phần tiền. |
+| M2-08 | Chính sách tiêm snapshot lúc đặt; kiểm tra giấy đúng pet và hợp lệ tại ngày check-in. | Đổi mặc định chỉ áp dụng đơn mới; Admin áp chính sách mới lên đơn cũ qua thao tác riêng có lý do/thông báo. Upload không đồng nghĩa xác minh. |
+| M2-09 | OTP chỉ qua email MailKit; SMS ngoài phạm vi lần này. | Thông số kỹ thuật OTP trong system-design đã được duyệt cùng gói theo M2-15; SMS vẫn ngoài phạm vi. |
+| M2-10 | Public chọn pet cũ sau OTP qua email đã lưu của đúng hồ sơ. | OTP email mới không cấp quyền hồ sơ cũ. Tắt OTP/mất email cũ thì nhập pet cho lần đặt mới hoặc nhờ quầy; không merge pet theo tên. Thay Q05 cũ cấm mọi chọn pet Public. |
+| M2-11 | Hết 30 phút chưa xác nhận đủ cọc hợp lệ thì hủy, nhả chỗ; tiền phát hiện sau ghi nhận và hoàn toàn bộ. | Không tự hồi sinh reservation; khách muốn tiếp tục tạo đơn mới và kiểm tra công suất lại. Không chỉ dựa timestamp chuyển tiền khách khai để giữ chỗ. |
+| M2-12 | Cho phép vượt 19 bảng; bảng bổ sung trình riêng trong báo cáo. | Không chốt 33 bảng hoặc duyệt mọi bảng chỉ vì cho vượt 19. Mỗi bảng phải có trách nhiệm/ràng buộc rõ. |
+| M2-13 | Khôi phục tracking nhập SĐT + email snapshot, ngày hẹn tùy chọn; gửi mã hiện có qua email, thông báo Public chung. | Không đổi mã, không trả mã/danh sách đơn Public. Mất quyền email thì xác minh tại quầy. Kế thừa D19; không hỏi duyệt lại việc gửi email vốn đã chốt. |
+| M2-14 | NFR <500ms đo phần xử lý API/DB sau khi nhận đủ request; thời gian truyền file và gửi SMTP đo riêng. | Không đồng nghĩa tổng request end-to-end <500ms; không tự đổi SMTP sang async hoặc thay emailDelivery SENT/FAILED. Cần đo thực tế ở implementation. |
+| M2-15 | Nhóm trưởng duyệt toàn bộ sáu tệp: system-design.md, api-contract.md, requirements-traceability.md, system-analysis.md, SRS_He_Thong_Quan_Ly_Spa_Thu_Cung_AI_Readable.md và scope-and-decisions.md. | Khóa baseline thiết kế/API hiện tại, gồm 33 bảng, 68 operations và thông số kỹ thuật trong gói. Chấp nhận giới hạn Mermaid chưa render; không chứng nhận implementation, tests, hiệu năng, hoặc tự yêu cầu sang M3. |
+
+Thu tiền và bàn giao là hai hành động: UC35 chỉ PAID; UC30 ghi thực nhận mới DONE và tính lại điều kiện kết thúc đơn. Quy tắc này thay Q08/T09 cũ gộp tất cả trong checkout. Không tự mở workflow phát hành lại yêu cầu cọc hoặc sửa tiền đã xác nhận.
+
+Review L1–L5 đã được tiếp nhận: [phương án dữ liệu M2](../design/system-design.md#m2-data). Chi tiết vật lý và contract đã được duyệt trong gói M2-15; kiểm chứng implementation và render được phân biệt với phê duyệt tài liệu.
+
+### Diễn giải theo checklist M2 mới nhất
+
+Checklist 2.6 của nhóm trưởng yêu cầu khóa tra cứu sai 5 lần: áp dụng khóa ngay lần sai thứ 5 trong 15 phút, khóa 15 phút rồi reset hoặc Admin mở sớm. Quy tắc này thay chữ “quá 5 lần” ở UC15 baseline; không phải câu hỏi cần duyệt lại.

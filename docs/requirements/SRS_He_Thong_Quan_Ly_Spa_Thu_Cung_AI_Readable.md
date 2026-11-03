@@ -9,6 +9,8 @@ status: "Baseline UC v3 đã chuẩn hóa theo báo cáo kiểm toán EGM"
 ---
 
 # TÀI LIỆU ĐẶC TẢ YÊU CẦU PHẦN MỀM (SRS v3.0)
+
+> **Bổ sung được duyệt tại M2 — 03/11/2026:** giữ nguyên nội dung baseline v3.0 bên dưới để truy vết. [Nhật ký M2-01–M2-15](scope-and-decisions.md#m2-decisions) ghi rõ các điều chỉnh được nhóm trưởng duyệt sau khi đóng băng: thiết kế đủ ba Extension; cọc/hoàn thủ công; công thức cọc toàn đơn; hoàn phần dư; hết hạn khi chưa xác nhận; OTP email và quyền chọn pet cũ; snapshot chính sách vaccine; tách PAID/DONE; hoàn tất đơn có pet CANCELLED và quyết toán đơn toàn pet hủy; miễn đón trễ sau PAID; cho phép bổ sung bảng theo nhóm; phạm vi đo NFR 500ms cho API/DB, tách thời gian truyền file và SMTP. Những điều chỉnh đó thay đoạn cũ trái ngược, không áp dụng cả hai cách hiểu. Gói sáu tài liệu, gồm thiết kế vật lý và API, đã được nhóm trưởng duyệt và khóa theo M2-15. Đây là phê duyệt baseline tài liệu; không chứng nhận code/tests/latency hoặc Mermaid đã render.
 ## HỆ THỐNG QUẢN LÝ VẬN HÀNH DỊCH VỤ SPA & HOTEL THÚ CƯNG (PETSPA & HOTEL)
 
 - **Môn học:** SE310 - Công Nghệ .NET
