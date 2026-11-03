@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
+using PetSpa.Api.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,6 +23,8 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+app.UseMiddleware<GlobalExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
 {
