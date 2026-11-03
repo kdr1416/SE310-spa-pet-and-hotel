@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
+using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,6 +24,13 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+if (app.Configuration.GetValue<bool>("SeedData:Enabled"))
+{
+    var options = app.Configuration.GetSection("SeedData").Get<SeedDataOptions>() ?? new SeedDataOptions();
+    using var scope = app.Services.CreateScope();
+    await DbInitializer.InitializeAsync(scope.ServiceProvider.GetRequiredService<PetSpaDbContext>(), options, app.Environment);
+}
 
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
