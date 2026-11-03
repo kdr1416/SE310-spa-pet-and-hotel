@@ -208,6 +208,8 @@ Role/permission kiểm tra server theo FR01. Assignment FK đơn thuần không 
 
 Quy ước: id integer identity PK; FK integer cùng kiểu; tiền numeric(14,0), cân numeric(5,2), số đêm/số lượng integer, thời điểm timestamptz, ngày date, mã varchar(40), tên varchar(150), ghi chú text. Dấu ? là NULL; không có ? là NOT NULL. Các bảng nghiệp vụ có created_at; bảng có thay đổi có updated_at. Quy ước FK không thay thế kiểm tra cùng booking.
 
+**Ánh xạ M3 theo yêu cầu triển khai ngày 03/11/2026:** `chi_tiet_combo` dùng PK kép `(combo_id, dich_vu_id)`, không thêm id identity; `nhan_vien_quyen` dùng PK kép và `quyen` dùng PK chuỗi như đã chốt. `chi_tiet_don` lưu thêm `can_nang_khai_bao numeric(5,2) NOT NULL` từ payload đặt lịch và `ready_at timestamptz NULL` khi sẵn sàng để bảo toàn dữ liệu từng lượt. Đây là ánh xạ dữ liệu cho contract hiện có, không thêm endpoint hoặc thay quy tắc tính tiền. `created_at`/`updated_at` có giá trị mặc định lúc INSERT; cập nhật timestamp, JSON validation và các invariant liên bảng thuộc tầng service sau này, không được hiểu là đã có chỉ nhờ Fluent API.
+
 | Bảng | Cột và kiểu nghiệp vụ | Bất biến |
 |---|---|---|
 | dich_vu_trong_don | id; chi_tiet_don_id; dich_vu_id?; combo_id?; khung_gio_id; request_id uuid; la_phat_sinh boolean; ten_snapshot; bang_gia_size_snapshot jsonb; thoi_luong_snapshot integer; trang_thai; size_chot?; gia_chot? numeric(14,0); ly_do?; hoan_tat_at?/huy_at? | XOR nguồn; request_id unique; snapshot bốn giá cam kết lúc đặt; dịch vụ phát sinh snapshot giá khi xác nhận thêm. Thời lượng >0; giá chốt >=0. |
