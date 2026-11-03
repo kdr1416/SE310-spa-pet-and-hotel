@@ -1,8 +1,13 @@
+using Microsoft.EntityFrameworkCore;
+using PetSpa.Api.Data;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddOpenApi();
+builder.Services.AddDbContext<PetSpaDbContext>(options =>
+    options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 // CORS configuration for local frontend development
 builder.Services.AddCors(options =>
