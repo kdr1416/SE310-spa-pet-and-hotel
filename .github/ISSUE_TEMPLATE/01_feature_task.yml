@@ -1,7 +1,7 @@
 name: 🚀 Feature Task
 description: Đề xuất hoặc giao một task phát triển tính năng mới cho thành viên
 title: "[FEAT]: "
-labels: ["enhancement"]
+labels: ["feature", "backend"]
 body:
   - type: markdown
     attributes:
