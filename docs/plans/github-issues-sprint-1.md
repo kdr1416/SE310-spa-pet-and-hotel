@@ -58,20 +58,25 @@ Tạo cơ chế Seeder để nạp dữ liệu ban đầu cho database phục v�
    - Size S: `[0, 5)` kg
    - Size M: `[5, 15)` kg
    - Size L: `[15, 25)` kg
-   - Size XL: `[25, 100)` kg
+   - Size XL: `[25, +∞)` kg (`can_nang_den = NULL`).
 2. **2 Ca làm việc (`ca_lam_viec`):**
    - Ca Sáng: `08:00 - 12:00`, sức chứa 10 pet, trần 240 phút.
    - Ca Chiều: `13:30 - 17:30`, sức chứa 10 pet, trần 240 phút.
-3. **Danh mục dịch vụ Spa cơ bản (`dich_vu` & `bang_gia_size`):**
+3. **3 dịch vụ Spa cơ bản (`dich_vu` & `bang_gia_size`):**
    - Dịch vụ Tắm sấy vệ sinh (loại SPA, 60 phút, giá: S: 150k, M: 200k, L: 250k, XL: 300k).
-   - Dịch vụ Cắt tỉa tạo kiểu (loại SPA, 90 phút, giá: S: 250k, M: 350k, L: 450k, XL: 600k).
+   - Dịch vụ Cắt tỉa tạo kiểu (loại SPA, 90 phút, giá: S: 250k, M: 350k, L: 450k, XL: 600k); không được mua riêng theo system-design mục 4.10.
+   - Seed thêm một dịch vụ Spa cơ bản hợp lệ để đủ 3 dịch vụ theo kế hoạch tổng; dữ liệu chỉ phục vụ phát triển/kiểm thử.
 4. **Tài khoản nhân viên ban đầu (`nhan_vien`):**
-   - 1 Admin: username `admin`, password đã hash `Admin@123`.
+   - 1 Admin: username `admin`; mật khẩu lấy từ cấu hình môi trường phát triển/kiểm thử, chỉ lưu hash, không ghi credential mặc định trong repo.
    - 2 Staff: `staff1` (Lễ tân), `staff2` (Kỹ thuật viên Spa).
+5. **Dữ liệu vận hành phụ thuộc:**
+   - Seed `quyen`, `nhan_vien_quyen` theo template FR01; kiểm tra permission hiện tại từ Sprint 1, chỉ dời API quản trị quyền E53/E60 sang Sprint 3.
+   - Seed `khung_gio_dat_lich` mở nhận khách cho ngày kiểm thử và `dot_dang_ky_ca` + `dang_ky_ca` trạng thái `APPROVED` cho kỹ thuật viên đủ quyền care. Chỉ có `ca_lam_viec` thì E03/E15 chưa đủ điều kiện hoạt động.
+   - Tắt các cờ `otpEmail`, `cocHotel`, `giuCho` cho luồng Spa Sprint 1 và snapshot chính sách khi đặt; không bỏ guard ảnh hoặc tiêm chủng khi policy yêu cầu.
 
 ### Tiêu chí nghiệm thu (DoD):
-- [ ] Có class `DbInitializer` nạp dữ liệu an toàn (kiểm tra `!context.NhanVienSet.Any()` trước khi nạp).
-- [ ] Integration test truy vấn database thấy đủ 4 size, 2 ca, dịch vụ và tài khoản seed.
+- [ ] Có class `DbInitializer` nạp dữ liệu idempotent theo khóa của từng nhóm dữ liệu; không dùng riêng `NhanVienSet.Any()` để bỏ qua mọi nhóm seed khác.
+- [ ] Integration test truy vấn database thấy đủ 4 size (XL không có cận trên), 2 ca, dịch vụ, tài khoản, quyền, slot và đăng ký ca `APPROVED`; chạy seed lại không nhân đôi dữ liệu.
 
 ---
 
@@ -89,12 +94,12 @@ Triển khai endpoint Public `GET /api/catalog` trả về danh mục dịch v�
 ### Hợp đồng API:
 - **Tham chiếu:** `api-contract.md` mục 2 (E02) & mục 3.2 (`Catalog`, `Service`, `SizePrice`).
 - **Route:** `GET /api/catalog` (Không cần JWT).
-- **Quy tắc:** Chỉ lấy dịch vụ có `is_active = true`. Giá phải trả đủ 4 size S/M/L/XL.
+- **Quy tắc:** Chỉ lấy dịch vụ có `is_active = true`. Giá phải trả đủ 4 size S/M/L/XL; response là `Catalog` gồm `dichVu`, `combo`, `loaiPhong`, `khoangSize`.
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Response trả về 200 kèm danh sách dịch vụ và bảng giá 4 size.
 - [ ] Test Happy Path: Trả về danh sách dịch vụ seed.
-- [ ] Test Edge Case: Khi không có dịch vụ nào active, trả về mảng rỗng `[]` (không ném lỗi 500).
+- [ ] Test Edge Case: Khi không có dịch vụ nào active, trả về `data.dichVu: []` trong `Catalog` (không đổi toàn bộ `data` thành mảng, không ném lỗi 500).
 
 ---
 
@@ -116,11 +121,11 @@ Triển khai endpoint kiểm tra ca làm việc còn nhận thêm thú cưng cho
   - Kiểm tra ngày ca: Không rơi vào ngày đóng tiếp nhận khách (`ngay_nghi`).
   - Kiểm tra 2 trần đồng thời:
     1. Số lượng thú cưng trong ca chưa vượt `suc_chua_pet`.
-    2. Tổng số phút của ca sau khi cộng thêm thời lượng dịch vụ yêu cầu không vượt `tran_phut`.
+    2. Tổng phút snapshot không vượt `min(tran_phut, tổng phút nhân viên APPROVED đủ quyền care)`; đếm pet riêng biệt theo ca, không đếm từng dòng dịch vụ thành một pet.
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Test Happy Path: Ca còn đủ chỗ và đủ phút $\rightarrow$ trả `coTheDat: true`.
-- [ ] Test Sad Path: Ca đã hết slot thú cưng hoặc vượt trần phút $\rightarrow$ trả `coTheDat: false` kèm `lyDo`.
+- [ ] Test Sad Path: Ca hết slot, vượt trần phút hoặc không có nhân sự `APPROVED` đủ quyền care $\rightarrow$ trả HTTP 409 `CAPACITY_EXCEEDED` theo api-contract mục 5 (E03–05).
 
 ---
 
@@ -140,6 +145,7 @@ Triển khai endpoint đăng nhập cho nhân viên nội bộ (Lễ tân, Kỹ 
 - **Route:** `POST /api/auth/login`
 - **Payload:** `{ "tenDangNhap": "...", "matKhau": "..." }`
 - **Xử lý:** Kiểm tra tài khoản `is_active = true`, verify password hash, sinh JWT token thời hạn 8 giờ.
+- **Response/authorization:** Trả đúng `Session { accessToken, expiresIn, nhanVien: Employee }`; JWT không thay thế kiểm tra permission hiện tại theo FR01 ở các endpoint nội bộ. Không mở rộng role ngoài `ADMIN`/`STAFF`.
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Test Happy Path: Nhập đúng tài khoản seed trả về 200 kèm JWT token và thông tin `nhanVien`.
@@ -161,16 +167,20 @@ Triển khai endpoint đặt lịch dịch vụ Spa trực tuyến cho khách h�
 ### Hợp đồng API:
 - **Tham chiếu:** `api-contract.md` mục 2 (E04), DTO `BookingCreate`, `Booking`.
 - **Route:** `POST /api/bookings`
+- **Body:** `multipart/form-data` gồm `payload` JSON `BookingCreate` và file tiêm chủng tùy chọn theo `vaccinationFileKey` (api-contract mục 4).
+- **Phạm vi đã chốt 03/11/2026:** Chỉ nhận dịch vụ đơn; booking combo chuyển Sprint 2 cùng E61. Cắt tỉa không được mua riêng theo system-design mục 4.10.
 - **Quy tắc nghiệp vụ:**
-  - Tạo bản ghi `khach_hang` (nếu chưa có) và `thu_cung`.
+  - Lưu liên hệ snapshot của lần đặt; khi chưa xác định master an toàn theo SĐT dùng chung, không ghi đè hồ sơ cũ hoặc gộp pet theo tên. Public không chọn pet cũ khi OTP đang tắt (M2-10).
   - Tạo `don_dat_lich` ở trạng thái `PENDING`.
   - Sinh mã `trackingCode` 8 ký tự ngẫu nhiên duy nhất (ví dụ: `TRK-8X2A`).
   - Snapshot bảng giá dịch vụ tại thời điểm đặt vào `bang_gia_size_snapshot`.
   - Xử lý `requestId` (UUID): Nếu gửi trùng `requestId` và cùng nội dung thì trả lại kết quả cũ (Idempotent 200).
+  - Tạo booking và mọi bản ghi con, kiểm tra/giữ sức chứa trong cùng transaction. Gửi email sau commit; SMTP lỗi vẫn trả success với `emailDelivery: FAILED`.
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Test Happy Path: Tạo đơn Spa hợp lệ trả về HTTP 201 kèm mã tracking và thông tin tạm tính.
 - [ ] Test Idempotency: Gửi lại cùng `requestId` trả về 200 với mã tracking cũ (không sinh đơn mới).
+- [ ] Test Idempotency conflict: Cùng `requestId` khác nội dung trả 409 `IDEMPOTENCY_CONFLICT`.
 - [ ] Test Sad Path: Ca đã hết chỗ trả về 409 `CAPACITY_EXCEEDED`.
 
 ---
@@ -181,7 +191,7 @@ Triển khai endpoint đặt lịch dịch vụ Spa trực tuyến cho khách h�
 - **Labels:** `backend`, `feature`
 - **Assignee:** `Dev A`
 - **Nhánh Git:** `feat/issue-07-booking-manage`
-- **Phụ thuộc:** Issue #6 đã merge.
+- **Phụ thuộc:** Issue #5, #6 đã merge.
 
 ### Mô tả công việc:
 Triển khai cụm API cho Lễ tân tại quầy xem các đơn đang chờ xử lý (`PENDING`), sau đó bấm Duyệt hoặc Từ chối đơn.
@@ -192,6 +202,7 @@ Triển khai cụm API cho Lễ tân tại quầy xem các đơn đang chờ x�
   - `GET /api/internal/bookings?trangThai=PENDING` (E10a): Lấy danh sách đơn chờ duyệt.
   - `POST /api/internal/bookings/{id}/confirm` (E11): Chuyển trạng thái đơn từ `PENDING` $\rightarrow$ `CONFIRMED`.
   - `POST /api/internal/bookings/{id}/cancel` (E12): Chuyển trạng thái đơn sang `CANCELLED` kèm lý do.
+- **Request/guard:** E11 dùng `Command`; E12 dùng `Cancel` với `loaiHuy` và `lyDo`. Từ chối `STAFF_REJECTED` chỉ khi `PENDING`, nhả đúng tài nguyên đã giữ một lần; cả ba endpoint yêu cầu `BOOKING_APPROVE`.
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Test E10a: Trả về đúng danh sách các đơn có trạng thái `PENDING`.
@@ -217,6 +228,7 @@ Triển khai endpoint Public cho khách hàng tra cứu trạng thái đơn, ti�
 - **Route:** `POST /api/tracking/lookup`
 - **Payload:** `{ "soDienThoai": "0912345678", "trackingCode": "TRK-8X2A" }`
 - **Quy tắc an toàn:** Không lộ thông tin nhạy cảm nội bộ nhân viên.
+- **Guard:** Xác minh lại cặp SĐT + tracking từng request; khóa/rate limit theo contract trả 429, chỉ chiếu dữ liệu Public-safe của đúng đơn.
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Test Happy Path: Nhập đúng SĐT và mã tracking trả về 200 kèm đầy đủ thông tin thú cưng và trạng thái.
@@ -238,11 +250,12 @@ Khi khách mang thú cưng tới cửa hàng, nhân viên cân thực tế, ch�
 ### Hợp đồng API:
 - **Tham chiếu:** `api-contract.md` mục 2 (E15), DTO `Checkin`.
 - **Route:** `POST /api/internal/booking-pets/{id}/check-in`
+- **Body/guard:** `multipart/form-data` gồm `payload` JSON `Checkin` và file `anhTiepNhan` bắt buộc; kiểm tra `CHECKIN_PERFORM`, assignment có ca `APPROVED`, chưa invoice hiệu lực, xác nhận khách và giấy hợp lệ khi policy snapshot yêu cầu. Assignment không hợp lệ trả 409 `ASSIGNMENT_UNAVAILABLE`.
 - **Quy tắc chuyển trạng thái:**
   - Đơn đặt lịch phải đang ở trạng thái `CONFIRMED` hoặc `IN_PROGRESS`.
   - Thú cưng (`chi_tiet_don`) chuyển từ `NOT_ARRIVED` $\rightarrow$ `WAITING`.
   - Đơn đặt lịch (`don_dat_lich`) chuyển sang `IN_PROGRESS` (khi có thú cưng đầu tiên check-in).
-  - Chốt `can_nang_thuc_te`, `size_chot` và gán `nhan_vien_id` phụ trách.
+  - Map request `canNangThucTe` vào `chi_tiet_don.can_nang_chot`, lưu `size_thuc_te`, `size_chot`, thỏa thuận giá và `nhan_vien_id`; cập nhật cân hiện tại ở hồ sơ pet.
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Test Happy Path: Check-in hợp lệ chuyển trạng thái pet sang `WAITING`, đơn sang `IN_PROGRESS`.
@@ -265,15 +278,17 @@ Kỹ thuật viên cập nhật vòng đời chăm sóc của thú cưng và đ�
 - **Tham chiếu:** `api-contract.md` mục 2 (E17, E18), DTO `CareAction`, `CareLogCreate`.
 - **Routes:**
   - `POST /api/internal/booking-pets/{id}/care-actions` (E17): Nhận hành động `START`, `PAUSE`, `RESUME`, `READY`.
-  - `POST /api/internal/booking-pets/{id}/care-logs` (E18): Ghi nhật ký chăm sóc kèm URL ảnh.
+  - `POST /api/internal/booking-pets/{id}/care-logs` (E18): `multipart/form-data` gồm `payload` JSON `CareLogCreate` và file `anh` tùy chọn, phải có nội dung hoặc ảnh; không nhận URL/object path tùy ý.
+- **Guard:** E17 cần `CARE_UPDATE`, E18 cần `PHOTO_UPLOAD`, đúng assignment và ca `APPROVED` (Admin chỉ override actor). E17 READY nhận file `anhThanhPham` bắt buộc, trừ ngoại lệ ảnh được Admin duyệt hợp lệ; START kế thừa ảnh tiếp nhận, PAUSE cần lý do.
 - **Quy tắc trạng thái:**
   - `WAITING` $\rightarrow$ `START` $\rightarrow$ `IN_PROGRESS`.
   - `IN_PROGRESS` $\rightarrow$ `PAUSE` $\rightarrow$ `PAUSED`.
   - `PAUSED` $\rightarrow$ `RESUME` $\rightarrow$ `IN_PROGRESS` (Cấm `PAUSED` nhảy thẳng sang `READY`).
-  - `IN_PROGRESS` $\rightarrow$ `READY`: Đánh dấu sẵn sàng đón, lưu mốc `ready_at`.
+  - `IN_PROGRESS` $\rightarrow$ `READY`: Chỉ khi phần việc hoàn tất và có ảnh/ngoại lệ hợp lệ; lưu `ready_at`. Booking cha vẫn `IN_PROGRESS`, không thêm trạng thái booking `READY`.
+  - **Phạm vi đã chốt 03/11/2026:** Sprint 1 chỉ nhận dịch vụ đơn; booking combo cùng E61 triển khai Sprint 2, giữ 15 operations. Catalog vẫn trả đúng DTO, nhưng không nhận booking combo trong Sprint 1; không giả hoàn tất thành phần bằng READY.
 
 ### Tiêu chí nghiệm thu (DoD):
-- [ ] Test E17: Chuyển tuần tự `WAITING` $\rightarrow$ `IN_PROGRESS` $\rightarrow$ `READY` thành công.
+- [ ] Test E17: Chuyển tuần tự `WAITING` $\rightarrow$ `IN_PROGRESS` $\rightarrow$ `READY` thành công với ảnh và phần việc hoàn tất; thiếu ảnh/ngoại lệ thì bị chặn.
 - [ ] Test E17 lỗi: Cố tình chuyển từ `PAUSED` sang `READY` mà không qua `RESUME` $\rightarrow$ trả 409 `INVALID_TRANSITION`.
 - [ ] Test E18: Tạo nhật ký chăm sóc thành công lưu vào bảng `nhat_ky_cham_soc`.
 
@@ -307,7 +322,7 @@ Lập hóa đơn chốt tiền cho các thú cưng đã chăm sóc xong (`READY`
 - [ ] Test E24: Xem lại hóa đơn trả đúng thông tin các dòng dịch vụ.
 - [ ] Test E26 Happy Path: Xác nhận thu đủ tiền $\rightarrow$ hóa đơn chuyển sang `PAID`, lưu `paid_at`.
 - [ ] Test E26 Sad Path: Khách đưa thiếu tiền $\rightarrow$ bị chặn trả về 409 `AMOUNT_MISMATCH`.
-- [ ] Test E26 Idempotent: Bấm thu tiền lần 2 trên hóa đơn đã `PAID` $\rightarrow$ bị chặn trả về 409.
+- [ ] Test E26 Idempotent: Retry cùng `requestId` và nội dung đã commit trả 200 kết quả cũ, không tạo thêm giao dịch thu; cùng key khác nội dung trả 409 `IDEMPOTENCY_CONFLICT`. Lệnh thu mới trên invoice `PAID` bị chặn 409 `INVALID_TRANSITION`.
 
 ---
 
@@ -333,6 +348,7 @@ Thực hiện bàn giao thú cưng ra về sau khi khách đã hoàn tất nghĩ
 
 ### Tiêu chí nghiệm thu (DoD):
 - [ ] Test Happy Path: Bàn giao khi hóa đơn đã `PAID` $\rightarrow$ pet chuyển `DONE`, đơn chuyển `COMPLETED`.
+- [ ] Test Multi-pet: Bàn giao pet đầu sau PAID vẫn giữ đơn `IN_PROGRESS`; chỉ pet cuối được bàn giao mới chuyển đơn `COMPLETED` (M2-04).
 - [ ] Test Sad Path: Cố tình bàn giao khi hóa đơn chưa thanh toán (`UNPAID`) $\rightarrow$ bị chặn trả về 409 `INVALID_TRANSITION`.
 
 ---
