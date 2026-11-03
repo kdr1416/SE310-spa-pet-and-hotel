@@ -71,3 +71,33 @@ Các đường dẫn sau tính từ `backend/`:
 - Cấu hình qua environment variables hoặc .NET User Secrets; không commit credential. Dùng đúng khóa kết nối và cổng runtime/migration ở phần Configuration bên trên.
 - Test phải tạo dữ liệu riêng và dọn đúng dữ liệu của nó; không `EnsureDeleted`, truncate hoặc reset database dùng chung. Seed phải idempotent theo từng nhóm dữ liệu; không để khởi động API tự seed/reset môi trường ngoài phát triển/kiểm thử.
 - Issue #2 cung cấp seed và test seed; không đồng nghĩa đã có JWT login (#5), storage/email integration hoặc mọi fixture cho các endpoint sau. Chỉ chạy migration lên database khi đã được cho phép theo quy trình schema của nhóm.
+
+## Seed dữ liệu phát triển — Issue #2
+
+Seeder nằm ở `src/PetSpa.Api/Data/Seeding/DbInitializer.cs`. Mặc định tắt; muốn chạy, đặt các khóa cấu hình sau qua environment variables hoặc .NET User Secrets (dùng prefix `SeedData__` thay cho `SeedData:` khi đặt environment variables):
+
+| Khóa | Giá trị/cách sử dụng |
+|---|---|
+| `SeedData:Enabled` | `true` để seed khi API khởi động; sau khi chuẩn bị dữ liệu có thể tắt lại. |
+| `SeedData:Date` | Ngày tạo slot và ca `APPROVED`, định dạng `yyyy-MM-dd`; bỏ trống thì dùng ngày hiện tại ở Việt Nam. |
+| `SeedData:AdminPassword` | Mật khẩu riêng cho `admin`, 12–128 ký tự; không có giá trị mặc định. |
+| `SeedData:Staff1Password` | Mật khẩu riêng cho `staff1` (Lễ tân), cùng giới hạn trên. |
+| `SeedData:Staff2Password` | Mật khẩu riêng cho `staff2` (Kỹ thuật viên Spa), cùng giới hạn trên. |
+
+Chỉ cho phép môi trường `Development` hoặc `Testing`; bật seed ở `Production`/`Staging` sẽ dừng khởi động trước khi truy cập database. Dùng database phát triển riêng đã có schema; seeder **không** gọi `Migrate`/`EnsureCreated`. Seed ghi dữ liệu vào database được cấu hình, vì vậy hãy kiểm tra đúng database trước khi bật.
+
+Seed gồm 4 khoảng size, 2 ca, 3 dịch vụ và 12 giá, 3 tài khoản hash bằng ASP.NET Core `PasswordHasher<NhanVien>`, 24 permissions cùng grants FR01, slot/đăng ký ca cho ngày chọn và cấu hình `EXTENSION_SETTINGS` với `otpEmail`, `cocHotel`, `giuCho` đều `false`. Login ở Issue #5 cần dùng cùng cơ chế verify hash. Các lựa chọn dữ liệu mẫu chưa được kế hoạch chỉ định chi tiết: dịch vụ thứ ba là **Vệ sinh tai**, 30 phút, giá S/M/L/XL lần lượt 50/70/90/110 nghìn VND; key nội bộ cho nhóm cờ là `EXTENSION_SETTINGS`. Đây là dữ liệu phát triển, không phải quyết định giá vận hành thật. Dịch vụ cắt tỉa vẫn không được mua riêng theo contract nghiệp vụ.
+
+Mỗi lần chạy dùng một transaction và advisory lock PostgreSQL; chỉ thêm bản ghi thiếu theo username, mã size/permission, tên dịch vụ/ca và các khóa liên quan. Không đổi mật khẩu, giá, cờ cấu hình, reservation hoặc quyết định duyệt ca đã có. Xung đột role/tài khoản bị khóa thì dừng và rollback thay vì reset account. Chạy lại sẽ khôi phục cả grant seed bị xóa; không dùng seeder để quản trị quyền thực tế. Không sửa Entity, DbContext hoặc migration để seed.
+
+### Chạy integration test PostgreSQL
+
+`PETSPA_TEST_POSTGRES` là kết nối tới PostgreSQL **test local** có quyền tạo database (host chỉ chấp nhận `localhost`, `127.0.0.1`, `::1`). Cấu hình kết nối ngoài Git; không trỏ tới Neon hoặc database dùng chung. Sau khi đặt biến này, chạy từ root:
+
+```powershell
+dotnet test backend/PetSpa.sln
+```
+
+Mỗi test seed tạo một database `petspa_test_<GUID>`, áp dụng migration hiện có vào đúng database mới đó, rồi xóa riêng database vừa tạo khi kết thúc. Không reset database mà biến môi trường trỏ tới. Thiếu biến kết nối thì test báo lỗi cấu hình, không âm thầm skip hoặc dùng database runtime.
+
+CI backend dùng PostgreSQL 17 tạm của GitHub Actions và đặt biến này tự động. Chế độ trust chỉ nằm trong service test tạm bind `127.0.0.1`; không áp dụng cấu hình đó lên Neon hoặc server của nhóm. Các test model/envelope cũ vẫn không cần truy cập database.
