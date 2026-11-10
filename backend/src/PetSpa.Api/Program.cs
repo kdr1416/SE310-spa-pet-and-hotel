@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
+using PetSpa.Api.Services.Billing;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,6 +11,17 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddDbContext<PetSpaDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Cơ chế chuyển đổi linh hoạt: Mock Data vs Real Database
+var useMockData = builder.Configuration.GetValue<bool>("UseMockData", false);
+if (useMockData)
+{
+    builder.Services.AddScoped<ICatalogService, MockCatalogService>();
+}
+else
+{
+    builder.Services.AddScoped<ICatalogService, CatalogService>();
+}
 
 // CORS configuration for local frontend development
 builder.Services.AddCors(options =>
