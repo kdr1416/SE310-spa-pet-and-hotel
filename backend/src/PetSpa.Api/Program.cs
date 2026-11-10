@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
+using PetSpa.Api.Services.Billing;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -10,6 +11,17 @@ builder.Services.AddControllers();
 builder.Services.AddOpenApi();
 builder.Services.AddDbContext<PetSpaDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+// Đăng ký Service cho Hóa đơn (Issue #11)
+var useMockData = builder.Configuration.GetValue<bool>("UseMockData", false);
+if (useMockData)
+{
+    builder.Services.AddScoped<IInvoiceService, MockInvoiceService>();
+}
+else
+{
+    builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+}
 
 // CORS configuration for local frontend development
 builder.Services.AddCors(options =>
