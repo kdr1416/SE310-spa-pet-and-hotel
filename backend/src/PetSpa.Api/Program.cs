@@ -8,6 +8,7 @@ using Microsoft.IdentityModel.Tokens;
 using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
+using PetSpa.Api.Services.Billing;
 using PetSpa.Api.Services.Care;
 using PetSpa.Api.Services.Identity;
 using PetSpa.Api.Services;
@@ -77,6 +78,8 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
 builder.Services.AddOpenApi();
 builder.Services.AddDbContext<PetSpaDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.AddScoped<ICatalogService, CatalogService>();
 
 // CORS configuration for local frontend development
 builder.Services.AddCors(options =>
