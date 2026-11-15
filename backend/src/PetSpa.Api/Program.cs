@@ -1,12 +1,69 @@
+using System.IdentityModel.Tokens.Jwt;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
 using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
+using PetSpa.Api.Services.Identity;
+using PetSpa.Core.Common;
+
+JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddControllers()
+    .ConfigureApiBehaviorOptions(options =>
+    {
+        options.InvalidModelStateResponseFactory = context =>
+        {
+            var errors = context.ModelState
+                .Where(e => e.Value?.Errors.Count > 0)
+                .SelectMany(e => e.Value!.Errors.Select(err => new ApiErrorItem
+                {
+                    Field = JsonNamingPolicy.CamelCase.ConvertName(e.Key),
+                    Message = err.ErrorMessage
+                }))
+                .ToList();
+
+            var response = ApiResponse<object>.Fail(
+                "Dữ liệu không hợp lệ.",
+                "VALIDATION_FAILED",
+                errors,
+                context.HttpContext.TraceIdentifier);
+
+            return new BadRequestObjectResult(response);
+        };
+    });
+
+builder.Services.AddScoped<ITokenService, TokenService>();
+
+var jwtSecretKey = builder.Configuration["Jwt:SecretKey"];
+builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        if (!string.IsNullOrWhiteSpace(jwtSecretKey))
+        {
+            options.TokenValidationParameters = new TokenValidationParameters
+            {
+                ValidateIssuer = true,
+                ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "PetSpaApi",
+                ValidateAudience = true,
+                ValidAudience = builder.Configuration["Jwt:Audience"] ?? "PetSpaClient",
+                ValidateLifetime = true,
+                ValidateIssuerSigningKey = true,
+                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecretKey)),
+                NameClaimType = "username",
+                RoleClaimType = "role",
+                ClockSkew = TimeSpan.Zero
+            };
+        }
+    });
+
 builder.Services.AddOpenApi();
 builder.Services.AddDbContext<PetSpaDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
@@ -41,6 +98,7 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 app.UseCors("AllowFrontend");
+app.UseAuthentication();
 app.UseAuthorization();
 
 // Health check endpoint for integration testing and monitoring

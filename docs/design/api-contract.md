@@ -177,7 +177,7 @@ Các response scalar/object không có trường tùy ý ngoài bảng. Các ki�
 |---|---|
 | Acknowledged | daTiepNhan:true; thongBao:text |
 | Session | accessToken:secret; expiresIn:int>0; nhanVien:Employee |
-| Employee | maNhanVien:id; tenNhanVien:text; vaiTro:ADMIN/STAFF; quyen:text[]; dangHoatDong:bool |
+| Employee | maNhanVien:id; tenNhanVien:text; tenDangNhap:text; vaiTro:ADMIN/STAFF; quyen:text[]; dangHoatDong:bool |
 | Pet | maThuCung:id; tenThuCung:text; loaiPet:CHO/MEO; giong:text hoặc null; canNang:weight; ngaySinh:date hoặc null; loaiLong:text hoặc null; ghiChuDiUng:text hoặc null |
 | Customer | maKhachHang:id; hoTen:text; soDienThoai:text; email:email; thuCung:Pet[] |
 | Catalog | dichVu:Service[]; combo:Combo[]; loaiPhong:RoomType[]; khoangSize:SizeBand[] |
