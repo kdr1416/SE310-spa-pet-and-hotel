@@ -9,7 +9,9 @@ using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
 using PetSpa.Api.Services.Identity;
+using PetSpa.Api.Services;
 using PetSpa.Core.Common;
+using PetSpa.Core.Services;
 
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 
@@ -41,6 +43,7 @@ builder.Services.AddControllers()
     });
 
 builder.Services.AddScoped<ITokenService, TokenService>();
+builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
 
 var jwtSecretKey = builder.Configuration["Jwt:SecretKey"];
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
