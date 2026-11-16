@@ -304,7 +304,7 @@ Kế thừa kiểu/nullability ở 4.6. Mọi bảng có id PK và created_at/up
 | dot_dang_ky_ca | tu_ngay/den_ngay date; mo_at/dong_at; tao_boi_id | Đầu<=cuối, mở<đóng; kiểm tra đợt đang mở. |
 | audit_log | actor_loai; hanh_dong; loai_doi_tuong; trace_id; actor_id?; doi_tuong_id? int; ly_do?; truoc?/sau? jsonb; request_id? uuid; fingerprint? text; ket_qua? jsonb | UNIQUE(actor/action/request) khi có request; Append-only; không updated_at; không OTP/password/token/tracking pair; không FK đa hình giả tới mọi đối tượng. |
 
-Các cột bổ sung cho chi_tiet_don: tinh_trang_long? (BINH_THUONG/ROI_NHE/ROI_NANG/VE_RAN), ghi_chu_suc_khoe?, ho_so_tiem_chung_id?, xac_minh_tiem_boi_id?/xac_minh_tiem_at?, check_in_boi_id?/ban_giao_boi_id?, huy_boi_id?/huy_at?/ly_do_huy?, so_dem_da_o? int, nhan_som_boi_id?/nhan_som_ly_do?. Các FK actor NULL trước hành động, bắt buộc cùng timestamp sau hành động.
+Các cột bổ sung cho chi_tiet_don: tinh_trang_long? (jsonb mảng mã từ cấu hình FUR_CONDITIONS, mặc định gồm BINH_THUONG/ROI_NHE/ROI_NANG/VE_RAN/LONG_NGAN/LONG_DAI), ghi_chu_suc_khoe?, ho_so_tiem_chung_id?, xac_minh_tiem_boi_id?/xac_minh_tiem_at?, check_in_boi_id?/ban_giao_boi_id?, huy_boi_id?/huy_at?/ly_do_huy?, so_dem_da_o? int, nhan_som_boi_id?/nhan_som_ly_do?. Các FK actor NULL trước hành động, bắt buộc cùng timestamp sau hành động.
 
 Giấy hợp lệ theo chính sách vận hành: đúng pet, loại vaccine được cấu hình chấp nhận cho dịch vụ, có ngày tiêm và đủ bằng chứng về hiệu lực tại ngày tiếp nhận. Không suy đoán hiệu lực nếu giấy thiếu thông tin: yêu cầu làm rõ trước check-in. Tiệm cung cấp danh sách vaccine/mốc chấp nhận; phần mềm không tự đặt chỉ định y khoa. Lưu tiêu chí snapshot và người xác minh.
 

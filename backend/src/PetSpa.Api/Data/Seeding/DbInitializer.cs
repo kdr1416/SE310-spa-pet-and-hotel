@@ -44,6 +44,14 @@ public static class DbInitializer
                 GiaTri = "{\"otpEmail\":false,\"cocHotel\":false,\"giuCho\":false}"
             });
         }
+        if (!await context.CauHinhHeThongSet.AnyAsync(s => s.Khoa == "FUR_CONDITIONS", cancellationToken))
+        {
+            context.CauHinhHeThongSet.Add(new CauHinhHeThong
+            {
+                Khoa = "FUR_CONDITIONS", PhienBan = 1, SuaBoiId = admin.Id,
+                GiaTri = "[{\"ma\":\"BINH_THUONG\",\"ten\":\"Bình thường\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"ROI_NHE\",\"ten\":\"Rối nhẹ\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"ROI_NANG\",\"ten\":\"Rối nặng\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":true},{\"ma\":\"VE_RAN\",\"ten\":\"Ve rận\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"LONG_NGAN\",\"ten\":\"Lông ngắn\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"LONG_DAI\",\"ten\":\"Lông dài\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false}]"
+            });
+        }
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }

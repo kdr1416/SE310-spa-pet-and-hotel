@@ -21,7 +21,6 @@ public sealed class ChiTietDonConfiguration : IEntityTypeConfiguration<ChiTietDo
             table.HasCheckConstraint("ck_chi_tiet_don_size_chot_values", "size_chot IN ('S', 'M', 'L', 'XL')");
             table.HasCheckConstraint("ck_chi_tiet_don_gia_phong_cam_ket_nonnegative", "gia_phong_cam_ket >= 0");
             table.HasCheckConstraint("ck_chi_tiet_don_gia_phong_chot_nonnegative", "gia_phong_chot >= 0");
-            table.HasCheckConstraint("ck_chi_tiet_don_tinh_trang_long_values", "tinh_trang_long IN ('BINH_THUONG', 'ROI_NHE', 'ROI_NANG', 'VE_RAN')");
             table.HasCheckConstraint("ck_chi_tiet_don_can_nang_khai_bao_positive", "can_nang_khai_bao > 0");
         });
         builder.HasKey(e => e.Id).HasName("pk_chi_tiet_don");
@@ -39,7 +38,7 @@ public sealed class ChiTietDonConfiguration : IEntityTypeConfiguration<ChiTietDo
         builder.Property(e => e.BanGiaoAt).HasColumnName("ban_giao_at").HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(e => e.TraLaiAt).HasColumnName("tra_lai_at").HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(e => e.NhanSom).HasColumnName("nhan_som").HasColumnType("boolean").IsRequired(true);
-        builder.Property(e => e.TinhTrangLong).HasColumnName("tinh_trang_long").HasConversion<string>().HasColumnType("character varying(40)").IsRequired(false);
+        builder.Property(e => e.TinhTrangLong).HasColumnName("tinh_trang_long").HasColumnType("jsonb").IsRequired(false);
         builder.Property(e => e.GhiChuSucKhoe).HasColumnName("ghi_chu_suc_khoe").HasColumnType("text").IsRequired(false);
         builder.Property(e => e.XacMinhTiemAt).HasColumnName("xac_minh_tiem_at").HasColumnType("timestamp with time zone").IsRequired(false);
         builder.Property(e => e.HuyAt).HasColumnName("huy_at").HasColumnType("timestamp with time zone").IsRequired(false);

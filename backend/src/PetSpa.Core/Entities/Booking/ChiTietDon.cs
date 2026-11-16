@@ -23,7 +23,7 @@ public class ChiTietDon
     public DateTimeOffset? BanGiaoAt { get; set; }
     public DateTimeOffset? TraLaiAt { get; set; }
     public bool NhanSom { get; set; }
-    public FurCondition? TinhTrangLong { get; set; }
+    public string? TinhTrangLong { get; set; }
     public string? GhiChuSucKhoe { get; set; }
     public DateTimeOffset? XacMinhTiemAt { get; set; }
     public DateTimeOffset? HuyAt { get; set; }
