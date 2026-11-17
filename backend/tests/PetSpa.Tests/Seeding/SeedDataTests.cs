@@ -41,7 +41,7 @@ public class SeedDataTests
         Assert.Equal(39, await verify.NhanVienQuyenSet.CountAsync());
         Assert.Equal(2, await verify.KhungGioDatLichSet.CountAsync());
         Assert.Equal(2, await verify.DangKyCaSet.CountAsync());
-        Assert.Equal(1, await verify.CauHinhHeThongSet.CountAsync());
+        Assert.Equal(2, await verify.CauHinhHeThongSet.CountAsync());
         Assert.Equal(1, await verify.DotDangKyCaSet.CountAsync());
     }
 
@@ -110,7 +110,7 @@ public class SeedDataTests
             var slot = await context.KhungGioDatLichSet.OrderBy(s => s.Id).FirstAsync();
             slot.SlotDaDat = 2;
             slot.PhutDaGiu = 60;
-            var setting = await context.CauHinhHeThongSet.SingleAsync();
+            var setting = await context.CauHinhHeThongSet.SingleAsync(s => s.Khoa == "EXTENSION_SETTINGS");
             setting.GiaTri = "{\"otpEmail\":true,\"cocHotel\":false,\"giuCho\":false}";
             setting.PhienBan = 2;
             await context.SaveChangesAsync();
@@ -138,7 +138,7 @@ public class SeedDataTests
         var preservedSlot = await verify.KhungGioDatLichSet.OrderBy(s => s.Id).FirstAsync();
         Assert.Equal(2, preservedSlot.SlotDaDat);
         Assert.Equal(60, preservedSlot.PhutDaGiu);
-        var preservedSetting = await verify.CauHinhHeThongSet.SingleAsync();
+        var preservedSetting = await verify.CauHinhHeThongSet.SingleAsync(s => s.Khoa == "EXTENSION_SETTINGS");
         Assert.Equal(2, preservedSetting.PhienBan);
         using var json = JsonDocument.Parse(preservedSetting.GiaTri);
         Assert.True(json.RootElement.GetProperty("otpEmail").GetBoolean());
@@ -282,5 +282,8 @@ public class SeedDataTests
         Assert.False(json.RootElement.GetProperty("otpEmail").GetBoolean());
         Assert.False(json.RootElement.GetProperty("cocHotel").GetBoolean());
         Assert.False(json.RootElement.GetProperty("giuCho").GetBoolean());
+        var furConditions = await context.CauHinhHeThongSet.SingleAsync(s => s.Khoa == "FUR_CONDITIONS");
+        using var furJson = JsonDocument.Parse(furConditions.GiaTri);
+        Assert.Equal(6, furJson.RootElement.GetArrayLength());
     }
 }

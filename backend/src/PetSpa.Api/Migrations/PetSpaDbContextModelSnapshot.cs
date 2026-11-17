@@ -17,7 +17,7 @@ namespace PetSpa.Api.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.14")
+                .HasAnnotation("ProductVersion", "9.0.2")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -1175,7 +1175,7 @@ namespace PetSpa.Api.Migrations
                         .HasColumnName("thu_cung_id");
 
                     b.Property<string>("TinhTrangLong")
-                        .HasColumnType("character varying(40)")
+                        .HasColumnType("jsonb")
                         .HasColumnName("tinh_trang_long");
 
                     b.Property<DateTimeOffset?>("TraLaiAt")
@@ -1242,8 +1242,6 @@ namespace PetSpa.Api.Migrations
                             t.HasCheckConstraint("ck_chi_tiet_don_size_chot_values", "size_chot IN ('S', 'M', 'L', 'XL')");
 
                             t.HasCheckConstraint("ck_chi_tiet_don_size_thuc_te_values", "size_thuc_te IN ('S', 'M', 'L', 'XL')");
-
-                            t.HasCheckConstraint("ck_chi_tiet_don_tinh_trang_long_values", "tinh_trang_long IN ('BINH_THUONG', 'ROI_NHE', 'ROI_NANG', 'VE_RAN')");
 
                             t.HasCheckConstraint("ck_chi_tiet_don_trang_thai_cham_soc_values", "trang_thai_cham_soc IN ('NOT_ARRIVED', 'WAITING', 'IN_PROGRESS', 'PAUSED', 'READY', 'DONE', 'CANCELLED')");
                         });

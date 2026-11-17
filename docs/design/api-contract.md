@@ -102,6 +102,8 @@ E03 đổi GET draft thành POST cùng /api/availability để truyền nhu cầ
 | E59 | POST | /api/internal/bookings/{id}/late-fee-waiver | INVOICE_COLLECT | M2-03 | FeeWaiver | Acknowledged | 201 |
 | E60 | PUT | /api/admin/employees/{id}/role | PERMISSION_MANAGE | D18 | RoleWrite | Employee | 200 |
 | E61 | POST | /api/internal/order-services/{id}/components/{componentId}/complete | CARE_UPDATE | UC24/19B | Command | OrderService | 200 |
+| E62 | GET | /api/internal/fur-conditions | CHECKIN_PERFORM | UC23 | None | FurConditionItem[] | 200 |
+| E63 | PUT | /api/admin/fur-conditions | SYSTEM_CONFIG | UC64 | FurConditionsWrite | FurConditionItem[] | 200 |
 
 ## 3. Dictionary DTO
 
@@ -130,7 +132,7 @@ E03 đổi GET draft thành POST cùng /api/availability để truyền nhu cầ
 | TrackingCancel | soDienThoai:text(10 chữ số); trackingCode:text(8); requestId:uuid; lyDo:text(1..1000) |
 | Cancel | requestId:uuid; loaiHuy:CUSTOMER_CANCELLED/STAFF_REJECTED/NO_SHOW/STAFF_CANCELLED; lyDo:text(1..1000) |
 | Reschedule | requestId:uuid; maKhungGio:id; ngayTra:date; lyDo:text(1..1000) |
-| Checkin | requestId:uuid; canNangThucTe:weight; tinhTrangLong:BINH_THUONG/ROI_NHE/ROI_NANG/VE_RAN; maNhanVien:id; ghiChuSucKhoe:text(1..2000); quyetDinhGia:SIZE_THUC_TE/THU_GON; xacNhanKhach:true; noiDungThuGon?:text(1..1000); maHoSoTiemChung?:id; xacNhanGiayHopLe?:bool |
+| Checkin | requestId:uuid; canNangThucTe:weight; tinhTrangLong:code[1..20]; maNhanVien:id; ghiChuSucKhoe:text(1..2000); quyetDinhGia:SIZE_THUC_TE/THU_GON; xacNhanKhach:true; noiDungThuGon?:text(1..1000); maHoSoTiemChung?:id; xacNhanGiayHopLe?:bool |
 | Assignment | requestId:uuid; maNhanVien:id; lyDo:text(1..1000) |
 | CareAction | requestId:uuid; hanhDong:START/PAUSE/RESUME/READY; ghiChu?:text(1..2000); maNgoaiLeAnh?:id |
 | CareLogCreate | requestId:uuid; ghiChu?:text(1..2000); canNangTheoDoi?:weight |
@@ -168,6 +170,8 @@ E03 đổi GET draft thành POST cùng /api/availability để truyền nhu cầ
 | VaccinationOverride | requestId:uuid; maDichVuTrongDon:id[]; yeuCau:bool; lyDo:text(1..1000); xacNhanDaThongBao:true |
 | FeeWaiver | requestId:uuid; soTienDuKien:money; lyDo:text(1..1000) |
 | RoleWrite | requestId:uuid; vaiTro:ADMIN/STAFF; lyDo:text(1..1000) |
+| FurConditionsWrite | requestId:uuid; items:FurConditionItem[1..50] |
+| FurConditionItem | ma:code(1..40); ten:text(1..100); dangHoatDong:bool; choPhepPhuPhiGoRoi:bool |
 
 ### 3.2 Response data và kiểu lồng nhau
 
@@ -189,7 +193,7 @@ Các response scalar/object không có trường tùy ý ngoài bảng. Các ki�
 | Availability | maKhungGio:id; slotConLai:int; phutConLai:int; phong:RoomAvailability[]; coTheDat:bool; lyDo:text hoặc null |
 | RoomAvailability | maLoaiPhong:id; ngay:date; suatConLai:int |
 | Booking | maDon:id; trackingCode:text; trangThai:BookingState; batDauDuKien:instant; ketThucDuKien:instant; lienHe:Contact; tongTamTinh:money; thuCung:BookingPet[]; tienCoc:Deposit hoặc null; hoaDon:Invoice hoặc null; emailDelivery:SENT/FAILED |
-| BookingPet | maChiTietDon:id; maThuCung:id; tenThuCung:text; trangThai:PetState; canNangChot:weight hoặc null; sizeThucTe:Size hoặc null; sizeChot:Size hoặc null; maLoaiPhong:id hoặc null; tenNhanVienPhuTrach:text hoặc null; dichVu:OrderService[]; nhatKy:CareLog[]; nhanSom:bool; banGiaoAt:instant hoặc null; traLaiAt:instant hoặc null |
+| BookingPet | maChiTietDon:id; maThuCung:id; tenThuCung:text; trangThai:PetState; canNangChot:weight hoặc null; sizeThucTe:Size hoặc null; sizeChot:Size hoặc null; tinhTrangLong:code[] hoặc null; maLoaiPhong:id hoặc null; tenNhanVienPhuTrach:text hoặc null; dichVu:OrderService[]; nhatKy:CareLog[]; nhanSom:bool; banGiaoAt:instant hoặc null; traLaiAt:instant hoặc null |
 | OrderService | maDichVuTrongDon:id; maDichVu:id hoặc null; maCombo:id hoặc null; maKhungGio:id; tenDichVu:text; trangThai:CHO_THUC_HIEN/HOAN_TAT/HUY; sizeChot:Size hoặc null; giaChot:money hoặc null; thanhPhan:Component[] |
 | Component | maThanhPhan:id; maDichVu:id; tenDichVu:text; trangThai:CHO_THUC_HIEN/HOAN_TAT/HUY; hoanTatAt:instant hoặc null |
 | CareLog | maNhatKy:id; loaiNhatKy:text; ghiChu:text hoặc null; anhUrl:url hoặc null; canNangTheoDoi:weight hoặc null; tenTacGia:text; ghiNhanAt:instant |
@@ -232,7 +236,7 @@ Booking và Tracking dùng projection Public-safe: không password/JWT, object p
 | E15/16 | Pet NOT_ARRIVED trong đơn CONFIRMED hoặc IN_PROGRESS do pet khác; chưa invoice hiệu lực. Assignment có ca APPROVED hiện tại; 409 ASSIGNMENT_UNAVAILABLE. Cân/size theo bảng cam kết, THU_GON cần nội dung; không đồng thuận chưa check-in. Giấy hợp lệ khi policy snapshot yêu cầu, actor server. |
 | E17/18/61 | Assignment hiện tại + ca phù hợp; Admin override actor. PAUSED chỉ RESUME; READY cần phần việc xong và ảnh/ngoại lệ. Thành phần hoàn tất tạo dấu thời điểm, không giả hoàn tất cả combo. 403 khi actor sai, 409 khi state sai. |
 | E19/48/49 | Bình thường invoice PAID rồi mới DONE; E48 Admin thực hiện duyệt+bàn giao READY trong cùng transaction và còn pet thật sau thao tác. Chặn hai request nhận hết. E49 chỉ pet CANCELLED, ghi traLaiAt sau kiểm tra quyết toán/ngoại lệ hợp lệ; không đổi DONE. |
-| E20/21/22 | Chưa invoice hiệu lực, pet chưa DONE; Spa thêm ở WAITING/IN_PROGRESS/PAUSED, dùng size chốt; giữ cả phút và suất ca thực hiện. CANCEL cần PET_CANCEL_LINE/Admin theo nhánh và phần việc chưa hoàn tất; không hủy phần đã làm để nhả lại phút. COMPLETE cần care. Phí gỡ rối phải có ROI_NANG hoặc ảnh chứng minh. |
+| E20/21/22 | Chưa invoice hiệu lực, pet chưa DONE; Spa thêm ở WAITING/IN_PROGRESS/PAUSED, dùng size chốt; giữ cả phút và suất ca thực hiện. CANCEL cần PET_CANCEL_LINE/Admin theo nhánh và phần việc chưa hoàn tất; không hủy phần đã làm để nhả lại phút. COMPLETE cần care. Phí gỡ rối phải có tình trạng lông đánh dấu cho phép phụ phí gỡ rối (mặc định ROI_NANG) hoặc ảnh chứng minh. |
 | E23/25 | Một invoice hiệu lực; pet không hủy READY/DONE và pet hủy đã quyết toán. Toàn pet hủy vẫn invoice phần đã làm. Invoice không rỗng; zero due được cọc bao phủ vẫn invoice/PAID có xác nhận phân bổ. Thu hồi chỉ UNPAID; giữ lines, ẩn QR; bản mới maHoaDon mới và thayTheHoaDon. |
 | E26 | soTienThucNhan-soTienDaTraLai đúng conPhaiTra; cọc phân bổ hợp lệ, tiền thừa đã trả có dấu vết. Sai 409 AMOUNT_MISMATCH, giữ UNPAID. Chỉ PAID, không DONE. Retry không thu lại; không giao dịch thu 0 khi cọc đã đủ. |
 | E28/29/54/55 | Đợt đang mở, không chồng ca; APPROVED là công bố. Đổi ca đã duyệt chỉ Admin có lý do; không phá assignment hoặc giảm phút dưới cam kết. |
