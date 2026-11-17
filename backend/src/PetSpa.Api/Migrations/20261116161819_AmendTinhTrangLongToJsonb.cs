@@ -14,27 +14,28 @@ namespace PetSpa.Api.Migrations
                 name: "ck_chi_tiet_don_tinh_trang_long_values",
                 table: "chi_tiet_don");
 
-            migrationBuilder.AlterColumn<string>(
-                name: "tinh_trang_long",
-                table: "chi_tiet_don",
-                type: "jsonb",
-                nullable: true,
-                oldClrType: typeof(string),
-                oldType: "character varying(40)",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE chi_tiet_don
+                ALTER COLUMN tinh_trang_long TYPE jsonb
+                USING CASE
+                    WHEN tinh_trang_long IS NULL THEN NULL
+                    ELSE jsonb_build_array(tinh_trang_long)
+                END;
+                """);
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.AlterColumn<string>(
-                name: "tinh_trang_long",
-                table: "chi_tiet_don",
-                type: "character varying(40)",
-                nullable: true,
-                oldClrType: typeof(string),
-                oldType: "jsonb",
-                oldNullable: true);
+            migrationBuilder.Sql("""
+                ALTER TABLE chi_tiet_don
+                ALTER COLUMN tinh_trang_long TYPE character varying(40)
+                USING CASE
+                    WHEN tinh_trang_long IS NULL THEN NULL
+                    WHEN jsonb_typeof(tinh_trang_long) = 'array' THEN tinh_trang_long->>0
+                    ELSE tinh_trang_long #>> '{}'
+                END;
+                """);
 
             migrationBuilder.AddCheckConstraint(
                 name: "ck_chi_tiet_don_tinh_trang_long_values",
