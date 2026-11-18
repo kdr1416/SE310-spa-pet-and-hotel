@@ -8,9 +8,11 @@ using Microsoft.IdentityModel.Tokens;
 using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
+using PetSpa.Api.Services.Care;
 using PetSpa.Api.Services.Identity;
 using PetSpa.Api.Services;
 using PetSpa.Core.Common;
+using PetSpa.Core.Interfaces.Care;
 using PetSpa.Core.Services;
 
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
@@ -44,19 +46,23 @@ builder.Services.AddControllers()
 
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
+builder.Services.AddScoped<ICheckinService, CheckinService>();
 
-var jwtSecretKey = builder.Configuration["Jwt:SecretKey"];
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer(options =>
+    .AddJwtBearer();
+
+builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
+    .Configure<IConfiguration>((options, config) =>
     {
+        var jwtSecretKey = config["Jwt:SecretKey"];
         if (!string.IsNullOrWhiteSpace(jwtSecretKey))
         {
             options.TokenValidationParameters = new TokenValidationParameters
             {
                 ValidateIssuer = true,
-                ValidIssuer = builder.Configuration["Jwt:Issuer"] ?? "PetSpaApi",
+                ValidIssuer = config["Jwt:Issuer"] ?? "PetSpaApi",
                 ValidateAudience = true,
-                ValidAudience = builder.Configuration["Jwt:Audience"] ?? "PetSpaClient",
+                ValidAudience = config["Jwt:Audience"] ?? "PetSpaClient",
                 ValidateLifetime = true,
                 ValidateIssuerSigningKey = true,
                 IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtSecretKey)),
