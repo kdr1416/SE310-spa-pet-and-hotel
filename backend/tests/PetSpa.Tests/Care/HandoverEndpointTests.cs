@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
+using Npgsql;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -47,7 +48,7 @@ public class HandoverEndpointTests
         bool grantHandoverPermission = true)
     {
         var today = new DateOnly(2026, 11, 21);
-        var now = DateTimeOffset.UtcNow;
+        var now = CareTestSupport.Now;
 
         var handoverPerm = new Quyen { MaQuyen = "PET_HANDOVER", TenQuyen = "PET_HANDOVER" };
         db.QuyenSet.Add(handoverPerm);
@@ -266,7 +267,7 @@ public class HandoverEndpointTests
                 TrangThai = invoiceState.Value,
                 TongTien = 200000m,
                 CocKhauTru = 0m,
-                ConPhaiTra = invoiceState.Value == InvoiceState.PAID ? 0m : 200000m,
+                ConPhaiTra = 200000m,
                 KhachSnapshot = "{\"hoTen\":\"Nguyễn Văn A\",\"soDienThoai\":\"0912345678\",\"email\":\"khach@example.com\"}",
                 PaidAt = invoiceState.Value == InvoiceState.PAID ? now.AddMinutes(-5) : null,
                 TaoBoiId = receptionist.Id,
@@ -278,9 +279,71 @@ public class HandoverEndpointTests
     }
 
     [Fact]
+    public async Task Handover_ConcurrentFinalTwoPetsCompleteBooking()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var db = database.CreateContext();
+        SeedHandoverScenario(db, secondPetState: PetCareState.READY);
+        await using var postgres = new PostgresWebApplicationFactory(database.ConnectionString);
+        await using var factory = CareTestSupport.Configure(postgres);
+        using var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 301, TenDangNhap = "staff1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+        await using var blocker = new NpgsqlConnection(database.ConnectionString);
+        await blocker.OpenAsync();
+        await using var transaction = await blocker.BeginTransactionAsync();
+        await using var hold = new NpgsqlCommand("SELECT id FROM don_dat_lich WHERE id = 1 FOR UPDATE", blocker, transaction);
+        await hold.ExecuteScalarAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+        Task<HttpResponseMessage> HandoverAsync(int petId) =>
+            client.PostAsJsonAsync($"/api/internal/booking-pets/{petId}/handover",
+                new Handover { RequestId = Guid.NewGuid(), XacNhanDaNhan = true }, timeout.Token);
+        var first = HandoverAsync(10);
+        var second = HandoverAsync(11);
+        try
+        {
+            await CareTestSupport.WaitForLockWaitersAsync(
+                database.ConnectionString, "%don_dat_lich%FOR UPDATE%", 2, timeout.Token);
+        }
+        finally
+        {
+            await transaction.CommitAsync();
+        }
+
+        using var result1 = await first;
+        using var result2 = await second;
+        result1.StatusCode.Should().Be(HttpStatusCode.OK);
+        result2.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await db.DonDatLichSet.AsNoTracking().SingleAsync()).TrangThai.Should().Be(BookingState.COMPLETED);
+        (await db.ChiTietDonSet.AsNoTracking().ToListAsync()).Should().OnlyContain(p => p.TrangThaiChamSoc == PetCareState.DONE);
+        (await db.AuditLogSet.CountAsync()).Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Handover_AllPetsCancelledDoesNotCompleteBooking()
+    {
+        using var factory = CareTestSupport.Create(db => SeedHandoverScenario(db,
+            bookingState: BookingState.CANCELLED, firstPetState: PetCareState.CANCELLED, secondPetState: PetCareState.CANCELLED));
+        using var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 301, TenDangNhap = "staff1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var response = await client.PostAsJsonAsync("/api/internal/booking-pets/10/handover",
+            new Handover { RequestId = Guid.NewGuid(), XacNhanDaNhan = true });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        var booking = await db.DonDatLichSet.SingleAsync();
+        booking.TrangThai.Should().Be(BookingState.CANCELLED);
+        booking.HoanTatAt.Should().BeNull();
+    }
+
+    [Fact]
     public async Task Handover_SinglePetWhenInvoicePaid_TransitionsPetToDoneAndBookingToCompleted()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedHandoverScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedHandoverScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 301, TenDangNhap = "staff1", VaiTro = Role.STAFF });
@@ -314,7 +377,7 @@ public class HandoverEndpointTests
     [Fact]
     public async Task Handover_MultiPet_FirstPetKeepsBookingInProgress_LastPetCompletesBooking()
     {
-        using var factory = AuthApplicationFactory.Create(db =>
+        using var factory = CareTestSupport.Create(db =>
             SeedHandoverScenario(db, firstPetState: PetCareState.READY, secondPetState: PetCareState.READY));
         using var client = factory.CreateClient();
 
@@ -357,7 +420,7 @@ public class HandoverEndpointTests
     [Fact]
     public async Task Handover_MultiPetWithCancelledPet_CompletesBookingWhenNonCancelledPetsDone()
     {
-        using var factory = AuthApplicationFactory.Create(db =>
+        using var factory = CareTestSupport.Create(db =>
             SeedHandoverScenario(db, firstPetState: PetCareState.READY, secondPetState: PetCareState.CANCELLED));
         using var client = factory.CreateClient();
 
@@ -387,7 +450,7 @@ public class HandoverEndpointTests
     [InlineData(null)]
     public async Task Handover_WhenInvoiceNotPaid_Returns409InvalidTransition(InvoiceState? invoiceState)
     {
-        using var factory = AuthApplicationFactory.Create(db =>
+        using var factory = CareTestSupport.Create(db =>
             SeedHandoverScenario(db, invoiceState: invoiceState));
         using var client = factory.CreateClient();
 
@@ -418,7 +481,7 @@ public class HandoverEndpointTests
     [InlineData(PetCareState.CANCELLED)]
     public async Task Handover_WhenPetNotReady_Returns409InvalidTransition(PetCareState petState)
     {
-        using var factory = AuthApplicationFactory.Create(db =>
+        using var factory = CareTestSupport.Create(db =>
             SeedHandoverScenario(db, firstPetState: petState));
         using var client = factory.CreateClient();
 
@@ -437,7 +500,8 @@ public class HandoverEndpointTests
     [Fact]
     public async Task Handover_IdempotentRetrySameRequestId_Returns200CachedWithoutDuplicateAudit()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedHandoverScenario(db));
+        var clock = new CareTestSupport.Clock(CareTestSupport.Now);
+        using var factory = CareTestSupport.Create(db => SeedHandoverScenario(db), clock: clock);
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 301, TenDangNhap = "staff1", VaiTro = Role.STAFF });
@@ -450,6 +514,7 @@ public class HandoverEndpointTests
         firstResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var firstBody = await firstResponse.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
 
+        clock.UtcNow = clock.UtcNow.AddMinutes(20);
         var retryResponse = await client.PostAsJsonAsync("/api/internal/booking-pets/10/handover", payload);
         retryResponse.StatusCode.Should().Be(HttpStatusCode.OK);
         var retryBody = await retryResponse.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
@@ -460,12 +525,13 @@ public class HandoverEndpointTests
         var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
         var auditCount = await db.AuditLogSet.CountAsync(a => a.HanhDong == "PET_HANDOVER" && a.RequestId == requestId);
         auditCount.Should().Be(1);
+        (await db.ChiTietDonSet.SingleAsync()).BanGiaoAt.Should().Be(CareTestSupport.Now);
     }
 
     [Fact]
     public async Task Handover_WithoutPermissionOrUnauthenticated_Returns403Or401()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedHandoverScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedHandoverScenario(db));
         using var client = factory.CreateClient();
 
         var unauthResponse = await client.PostAsJsonAsync(
@@ -487,7 +553,7 @@ public class HandoverEndpointTests
     [Fact]
     public async Task Handover_InvalidPayloadOrNotFound_Returns400Or404()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedHandoverScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedHandoverScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 301, TenDangNhap = "staff1", VaiTro = Role.STAFF });

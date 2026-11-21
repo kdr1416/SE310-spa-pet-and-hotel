@@ -81,7 +81,7 @@ public class CareActionsEndpointTests
         bool seedPhotoException = false)
     {
         var today = new DateOnly(2026, 11, 20);
-        var now = DateTimeOffset.UtcNow;
+        var now = CareTestSupport.Now;
 
         var careUpdatePerm = new Quyen { MaQuyen = "CARE_UPDATE", TenQuyen = "CARE_UPDATE" };
         db.QuyenSet.Add(careUpdatePerm);
@@ -350,9 +350,24 @@ public class CareActionsEndpointTests
     }
 
     [Fact]
+    public async Task CareActions_ApprovedReservationShiftDoesNotAuthorizeOutsideActualShiftHours()
+    {
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db),
+            clock: new CareTestSupport.Clock(new DateTimeOffset(2026, 11, 20, 5, 0, 0, TimeSpan.Zero)));
+        using var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        using var form = BuildCareActionForm(new CareAction { RequestId = Guid.NewGuid(), HanhDong = CareActionType.START });
+
+        using var response = await client.PostAsync("/api/internal/booking-pets/10/care-actions", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
+    [Fact]
     public async Task CareActions_SequentialStartThenReadyWithPhoto_SucceedsAndKeepsBookingInProgress()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.WAITING));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.WAITING));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -385,7 +400,7 @@ public class CareActionsEndpointTests
         readyBody!.Success.Should().BeTrue();
         readyBody.Data!.TrangThai.Should().Be("READY");
         readyBody.Data.DichVu.Should().ContainSingle(d => d.TrangThai == "HOAN_TAT");
-        readyBody.Data.NhatKy.Should().Contain(nk => nk.LoaiNhatKy == "CARE_READY" && nk.AnhUrl != null && nk.AnhUrl.StartsWith("/storage/care-logs/"));
+        readyBody.Data.NhatKy.Should().Contain(nk => nk.LoaiNhatKy == "CARE_READY" && nk.AnhUrl != null && nk.AnhUrl.StartsWith("https://photo.test/"));
 
         using var scope = factory.Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
@@ -403,7 +418,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_PauseAndResume_RequiresReasonOnPause_AndTransitionsProperly()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -448,7 +463,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_PausedDirectlyToReady_Returns409InvalidTransition()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.PAUSED));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.PAUSED));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -471,7 +486,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_ReadyWithoutPhotoOrException_Returns409InvalidTransition()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -493,7 +508,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_ReadyWithValidPhotoException_SucceedsWithoutPhoto()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(
             db,
             petState: PetCareState.IN_PROGRESS,
             seedPhotoException: true));
@@ -520,7 +535,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_ReadyWithInvalidPhotoException_Returns409InvalidTransition()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -543,7 +558,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_ReadyWithIncompleteComboComponents_Returns409InvalidTransition()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(
             db,
             petState: PetCareState.IN_PROGRESS,
             seedComboIncomplete: true));
@@ -568,7 +583,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_WrongActorOrMissingShiftOrMissingPermission_Returns403Forbidden()
     {
-        using var factory1 = AuthApplicationFactory.Create(db => SeedCareScenario(db));
+        using var factory1 = CareTestSupport.Create(db => SeedCareScenario(db));
         using var client1 = factory1.CreateClient();
         var wrongActorToken = GenerateJwtFor(new NhanVien { Id = 203, TenDangNhap = "care2", VaiTro = Role.STAFF });
         client1.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", wrongActorToken);
@@ -576,7 +591,7 @@ public class CareActionsEndpointTests
         var res1 = await client1.PostAsync("/api/internal/booking-pets/10/care-actions", form1);
         res1.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
-        using var factory2 = AuthApplicationFactory.Create(db => SeedCareScenario(db, assigneeHasApprovedShift: false));
+        using var factory2 = CareTestSupport.Create(db => SeedCareScenario(db, assigneeHasApprovedShift: false));
         using var client2 = factory2.CreateClient();
         var staffToken = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
         client2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", staffToken);
@@ -584,7 +599,7 @@ public class CareActionsEndpointTests
         var res2 = await client2.PostAsync("/api/internal/booking-pets/10/care-actions", form2);
         res2.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
-        using var factory3 = AuthApplicationFactory.Create(db => SeedCareScenario(db, grantCarePermission: false));
+        using var factory3 = CareTestSupport.Create(db => SeedCareScenario(db, grantCarePermission: false));
         using var client3 = factory3.CreateClient();
         client3.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", staffToken);
         using var form3 = BuildCareActionForm(new CareAction { RequestId = Guid.NewGuid(), HanhDong = CareActionType.START });
@@ -595,7 +610,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_AdminOverrideActor_Succeeds()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.WAITING));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.WAITING));
         using var client = factory.CreateClient();
 
         var adminToken = GenerateJwtFor(new NhanVien { Id = 200, TenDangNhap = "admin", VaiTro = Role.ADMIN });
@@ -618,7 +633,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_MissingJwt_Returns401Unauthorized()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db));
         using var client = factory.CreateClient();
 
         using var form = BuildCareActionForm(new CareAction { RequestId = Guid.NewGuid(), HanhDong = CareActionType.START });
@@ -630,7 +645,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_PetNotFound_Returns404NotFound()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -645,7 +660,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_DuplicateRequestId_SamePayloadReturns200_DifferentPayloadReturns409()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.WAITING));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.WAITING));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -679,7 +694,7 @@ public class CareActionsEndpointTests
     [Fact]
     public async Task CareActions_UnsupportedFileSignature_Returns415UnsupportedFile()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
