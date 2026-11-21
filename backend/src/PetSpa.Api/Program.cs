@@ -14,6 +14,7 @@ using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using PetSpa.Api.Middleware;
 using PetSpa.Api.Services.Billing;
+using PetSpa.Api.Services.Booking;
 using PetSpa.Api.Services.Care;
 using PetSpa.Api.Services.Identity;
 using PetSpa.Api.Services.Storage;
@@ -88,6 +89,9 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
 builder.Services.AddScoped<SpaCapacityCalculator>();
+builder.Services.AddScoped<BookingCreateService>();
+builder.Services.AddScoped<BookingProofService>();
+builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
 builder.Services.AddScoped<ICheckinService, CheckinService>();
 builder.Services.AddScoped<ICareService, CareService>();
 builder.Services.AddScoped<IHandoverService, HandoverService>();
