@@ -57,13 +57,17 @@ public sealed class CareOperation(
 
         var replay = await FindReplayAsync<T>(command, responseMessage, cancellationToken);
         if (replay is not null)
-            return await SignMediaAsync(command.PetId, replay, cancellationToken);
+            return await SignMediaAsync(command, replay, cancellationToken);
 
         if (photo is not null)
         {
             var preflight = await perform(actor, clock.GetUtcNow(), null, true, cancellationToken);
             if (!preflight.IsSuccess)
-                return preflight;
+            {
+                // A concurrent request may have committed after the first replay lookup.
+                replay = await FindReplayAsync<T>(command, responseMessage, cancellationToken);
+                return replay is null ? preflight : await SignMediaAsync(command, replay, cancellationToken);
+            }
 
             // The post-upload command needs a fresh view of all mutable rows.
             db.ChangeTracker.Clear();
@@ -153,7 +157,7 @@ public sealed class CareOperation(
                 await DeleteOrphanAsync(objectPath);
         }
 
-        return await SignMediaAsync(command.PetId, result, cancellationToken);
+        return await SignMediaAsync(command, result, cancellationToken);
     }
 
     internal async Task<NhanVien?> FindEmployeeWithGrantAsync(int employeeId, string permission, CancellationToken cancellationToken) =>
@@ -218,7 +222,7 @@ public sealed class CareOperation(
         return new CareResult<T>(409, Message: "RequestId đã được sử dụng với dữ liệu khác.", ErrorCode: "IDEMPOTENCY_CONFLICT");
     }
 
-    private async Task<CareResult<T>> SignMediaAsync<T>(int petId, CareResult<T> result, CancellationToken cancellationToken)
+    private async Task<CareResult<T>> SignMediaAsync<T>(CareCommand command, CareResult<T> result, CancellationToken cancellationToken)
         where T : class
     {
         IReadOnlyList<CareLog> logs = result.Data switch
@@ -230,16 +234,21 @@ public sealed class CareOperation(
         if (logs.Count == 0)
             return result;
 
+        foreach (var log in logs)
+            log.AnhUrl = null;
+
+        if (!await CanReadMediaAsync(command, cancellationToken))
+            return result;
+
         var ids = logs.Select(log => log.MaNhatKy).ToList();
         var paths = await db.NhatKyChamSocSet.AsNoTracking()
-            .Where(log => log.ChiTietDonId == petId && ids.Contains(log.Id) && log.ObjectPath != null)
+            .Where(log => log.ChiTietDonId == command.PetId && ids.Contains(log.Id) && log.ObjectPath != null)
             .ToDictionaryAsync(log => log.Id, log => log.ObjectPath!, cancellationToken);
 
         var urls = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (var log in logs)
         {
             // The adapter stores keys at the bucket root. Historical local paths remain private.
-            log.AnhUrl = null;
             if (!paths.TryGetValue(log.MaNhatKy, out var path) || string.IsNullOrWhiteSpace(path) ||
                 path is "." or ".." || path.Contains('/') || path.Contains('\\') || path.Contains(':'))
                 continue;
@@ -252,7 +261,7 @@ public sealed class CareOperation(
                 }
                 catch (FileStorageException)
                 {
-                    logger.LogWarning("Could not sign care photo for pet {PetId}, log {LogId}.", petId, log.MaNhatKy);
+                    logger.LogWarning("Could not sign care photo for pet {PetId}, log {LogId}.", command.PetId, log.MaNhatKy);
                 }
 
                 urls.Add(path, url);
@@ -260,6 +269,19 @@ public sealed class CareOperation(
             log.AnhUrl = url;
         }
         return result;
+    }
+
+    private async Task<bool> CanReadMediaAsync(CareCommand command, CancellationToken cancellationToken)
+    {
+        var actor = await FindActorAsync(command, cancellationToken);
+        if (actor is null)
+            return false;
+        if (actor.VaiTro == Role.ADMIN || command.Permission is not ("CARE_UPDATE" or "PHOTO_UPLOAD"))
+            return true;
+
+        return await db.ChiTietDonSet.AsNoTracking().AnyAsync(pet =>
+            pet.Id == command.PetId && pet.NhanVienId == actor.Id, cancellationToken) &&
+            await HasCurrentShiftAsync(actor.Id, clock.GetUtcNow(), cancellationToken);
     }
 
     private async Task DeleteOrphanAsync(string path)

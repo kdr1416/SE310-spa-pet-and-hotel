@@ -350,6 +350,34 @@ public class CareActionsEndpointTests
     }
 
     [Fact]
+    public async Task CareActions_ReadyReplayRedactsPhotoAfterShiftEnds()
+    {
+        var clock = new CareTestSupport.Clock(CareTestSupport.Now);
+        var storage = new CareTestSupport.Storage();
+        using var factory = CareTestSupport.Create(db => SeedCareScenario(db, petState: PetCareState.IN_PROGRESS), storage, clock);
+        using var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var request = new CareAction { RequestId = Guid.NewGuid(), HanhDong = CareActionType.READY };
+        using var form = BuildCareActionForm(request, ValidPngBytes);
+        using var first = await client.PostAsync("/api/internal/booking-pets/10/care-actions", form);
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        var committed = (await first.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>())!.Data!;
+        committed.NhatKy.Single(log => log.LoaiNhatKy == "CARE_READY").AnhUrl.Should().StartWith("https://photo.test/");
+
+        clock.UtcNow = new DateTimeOffset(2026, 11, 20, 5, 0, 0, TimeSpan.Zero);
+        using var retryForm = BuildCareActionForm(request, ValidPngBytes);
+        using var retry = await client.PostAsync("/api/internal/booking-pets/10/care-actions", retryForm);
+
+        retry.StatusCode.Should().Be(HttpStatusCode.OK);
+        var replay = (await retry.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>())!.Data!;
+        replay.TrangThai.Should().Be("READY");
+        replay.NhatKy.Should().OnlyContain(log => log.AnhUrl == null);
+        storage.Reads.Should().ContainSingle();
+        storage.Uploads.Should().ContainSingle();
+    }
+
+    [Fact]
     public async Task CareActions_ApprovedReservationShiftDoesNotAuthorizeOutsideActualShiftHours()
     {
         using var factory = CareTestSupport.Create(db => SeedCareScenario(db),
