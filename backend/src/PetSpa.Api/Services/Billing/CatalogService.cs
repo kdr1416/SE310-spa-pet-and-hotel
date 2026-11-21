@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
 using PetSpa.Core.DTOs.Billing;
+using PetSpa.Core.Entities.Billing;
 
 namespace PetSpa.Api.Services.Billing;
 
@@ -9,55 +10,57 @@ public interface ICatalogService
     Task<CatalogDto> GetActiveCatalogAsync(CancellationToken cancellationToken = default);
 }
 
-public class CatalogService(PetSpaDbContext context) : ICatalogService
+public sealed class CatalogService(PetSpaDbContext context) : ICatalogService
 {
     public async Task<CatalogDto> GetActiveCatalogAsync(CancellationToken cancellationToken = default)
     {
-        var rawSizes = await context.HeSoCanNangSet
-            .AsNoTracking()
-            .OrderBy(x => x.CanNangTu)
+        var sizes = await context.HeSoCanNangSet.AsNoTracking().OrderBy(size => size.CanNangTu)
+            .Select(size => new CatalogSizeBandDto
+            {
+                MaSize = size.MaSize.ToString(), TuKg = size.CanNangTu, DenKg = size.CanNangDen
+            }).ToListAsync(cancellationToken);
+
+        var services = await context.DichVuSet.AsNoTracking().Where(service => service.IsActive).OrderBy(service => service.Id)
+            .Include(service => service.BangGiaSizeDichVuItems).ThenInclude(price => price.KhoangSize)
             .ToListAsync(cancellationToken);
 
-        var weightRanges = rawSizes.Select(x => new CatalogSizeBandDto
-        {
-            MaSize = x.MaSize.ToString(),
-            TuKg = x.CanNangTu,
-            DenKg = x.CanNangDen
-        }).ToList();
+        var combos = await context.ComboSet.AsNoTracking().Where(combo => combo.IsActive).OrderBy(combo => combo.Id)
+            .Include(combo => combo.BangGiaSizeComboItems).ThenInclude(price => price.KhoangSize)
+            .Include(combo => combo.ChiTietComboComboItems).ThenInclude(item => item.DichVu)
+                .ThenInclude(service => service.BangGiaSizeDichVuItems).ThenInclude(price => price.KhoangSize)
+            .AsSplitQuery().ToListAsync(cancellationToken);
 
-        var rawServices = await context.DichVuSet
-            .AsNoTracking()
-            .Where(s => s.IsActive)
-            .OrderBy(s => s.Id)
-            .Include(s => s.BangGiaSizeDichVuItems)
-                .ThenInclude(bg => bg.KhoangSize)
-            .ToListAsync(cancellationToken);
-
-        var services = rawServices.Select(s => new CatalogServiceItemDto
-        {
-            MaDichVu = s.Id,
-            TenDichVu = s.TenDichVu,
-            LoaiDichVu = s.LoaiDichVu,
-            ThoiLuongPhut = s.ThoiLuongPhut,
-            YeuCauTiemChung = s.YeuCauTiemChung,
-            MoTa = s.MoTa,
-            DangHoatDong = s.IsActive,
-            BangGia = s.BangGiaSizeDichVuItems
-                .OrderBy(bg => bg.KhoangSize != null ? bg.KhoangSize.CanNangTu : 0)
-                .Select(bg => new CatalogSizePriceDto
-                {
-                    MaSize = bg.KhoangSize != null ? bg.KhoangSize.MaSize.ToString() : string.Empty,
-                    DonGia = bg.DonGia
-                })
-                .ToList()
-        }).ToList();
+        var rooms = await context.LoaiPhongSet.AsNoTracking().Where(room => room.IsActive).OrderBy(room => room.Id)
+            .Select(room => new CatalogRoomTypeDto
+            {
+                MaLoaiPhong = room.Id, TenPhong = room.TenPhong, GiaMoiDem = room.GiaMoiDem,
+                SoLuongPhong = room.SoLuongPhong, DangHoatDong = room.IsActive
+            }).ToListAsync(cancellationToken);
 
         return new CatalogDto
         {
-            DichVu = services,
-            Combo = [],
-            LoaiPhong = [],
-            KhoangSize = weightRanges
+            DichVu = services.Select(MapService).ToList(),
+            Combo = combos.Select(combo => new CatalogComboDto
+            {
+                MaCombo = combo.Id, TenCombo = combo.TenCombo, MoTa = combo.MoTa, DangHoatDong = combo.IsActive,
+                ThanhPhan = combo.ChiTietComboComboItems.OrderBy(item => item.DichVuId).Select(item => MapService(item.DichVu)).ToList(),
+                BangGia = MapPrices(combo.BangGiaSizeComboItems)
+            }).ToList(),
+            LoaiPhong = rooms,
+            KhoangSize = sizes
         };
     }
+
+    private static CatalogServiceItemDto MapService(DichVu service) => new()
+    {
+        MaDichVu = service.Id, TenDichVu = service.TenDichVu, LoaiDichVu = service.LoaiDichVu,
+        ThoiLuongPhut = service.ThoiLuongPhut, YeuCauTiemChung = service.YeuCauTiemChung,
+        MoTa = service.MoTa, DangHoatDong = service.IsActive, BangGia = MapPrices(service.BangGiaSizeDichVuItems)
+    };
+
+    private static List<CatalogSizePriceDto> MapPrices(IEnumerable<BangGiaSize> prices) =>
+        prices.OrderBy(price => price.KhoangSize.CanNangTu).Select(price => new CatalogSizePriceDto
+        {
+            MaSize = price.KhoangSize.MaSize.ToString(), DonGia = price.DonGia
+        }).ToList();
 }

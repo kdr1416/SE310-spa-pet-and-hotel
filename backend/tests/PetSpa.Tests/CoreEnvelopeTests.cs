@@ -5,7 +5,9 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using PetSpa.Core.Common;
+using PetSpa.Api.Services.Storage;
 
 namespace PetSpa.Tests;
 
@@ -20,14 +22,11 @@ public class CoreEnvelopeTests
             new JsonSerializerOptions(JsonSerializerDefaults.Web)));
         var root = json.RootElement;
 
-        Assert.Equal(new[] { "success", "data", "message", "errorCode", "errors", "traceId" },
+        Assert.Equal(new[] { "success", "data", "message" },
             root.EnumerateObject().Select(property => property.Name));
         Assert.True(root.GetProperty("success").GetBoolean());
         Assert.Equal(7, root.GetProperty("data").GetProperty("maDon").GetInt32());
         Assert.Equal("Thành công", root.GetProperty("message").GetString());
-        Assert.Equal(JsonValueKind.Null, root.GetProperty("errorCode").ValueKind);
-        Assert.Equal(JsonValueKind.Null, root.GetProperty("errors").ValueKind);
-        Assert.Equal(string.Empty, root.GetProperty("traceId").GetString());
     }
 
     [Fact]
@@ -73,7 +72,7 @@ public class CoreEnvelopeTests
         Assert.Equal(JsonValueKind.Null, root.GetProperty("data").ValueKind);
         Assert.Equal("Đã xảy ra lỗi hệ thống nội bộ.", root.GetProperty("message").GetString());
         Assert.Equal("INTERNAL_SERVER_ERROR", root.GetProperty("errorCode").GetString());
-        Assert.Equal(JsonValueKind.Null, root.GetProperty("errors").ValueKind);
+        Assert.Empty(root.GetProperty("errors").EnumerateArray());
         Assert.Equal("core-envelope-test-trace", root.GetProperty("traceId").GetString());
         Assert.DoesNotContain("Test exception detail", body);
         Assert.DoesNotContain("InvalidOperationException", body);
@@ -95,6 +94,61 @@ public class CoreEnvelopeTests
         Assert.True(json.RootElement.GetProperty("success").GetBoolean());
         Assert.Equal(7, json.RootElement.GetProperty("data").GetProperty("maDon").GetInt32());
         Assert.Equal("Thành công", json.RootElement.GetProperty("message").GetString());
+    }
+
+    [Fact]
+    public async Task ProtectedRoute_WithoutJwt_ReturnsContractError()
+    {
+        using var factory = CreateFactory("Testing");
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/api/internal/invoices/1");
+        Assert.Equal(HttpStatusCode.Unauthorized, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("UNAUTHENTICATED", json.RootElement.GetProperty("errorCode").GetString());
+        Assert.Empty(json.RootElement.GetProperty("errors").EnumerateArray());
+        Assert.False(string.IsNullOrWhiteSpace(json.RootElement.GetProperty("traceId").GetString()));
+        Assert.NotEmpty(response.Headers.WwwAuthenticate);
+    }
+
+    [Fact]
+    public async Task Login_LimitsRequestsPerClientIp_AndReturnsRetryAfter()
+    {
+        using var factory = CreateFactory("Testing").WithWebHostBuilder(builder =>
+            builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                new Dictionary<string, string?> { ["RateLimiting:Login:PermitLimit"] = "1" })));
+        using var client = factory.CreateClient();
+        var first = await SendLoginAsync("192.0.2.1");
+        var blocked = await SendLoginAsync("192.0.2.1");
+        var other = await SendLoginAsync("192.0.2.2");
+        Assert.Equal(400, first.Response.StatusCode);
+        Assert.Equal(429, blocked.Response.StatusCode);
+        Assert.InRange(int.Parse(blocked.Response.Headers["Retry-After"].ToString()), 1, 60);
+        using var json = await JsonDocument.ParseAsync(blocked.Response.Body);
+        Assert.Equal("RATE_LIMITED", json.RootElement.GetProperty("errorCode").GetString());
+        Assert.Equal(400, other.Response.StatusCode);
+
+        Task<Microsoft.AspNetCore.Http.HttpContext> SendLoginAsync(string ip) =>
+            factory.Server.SendAsync(context =>
+            {
+                context.Connection.RemoteIpAddress = IPAddress.Parse(ip);
+                context.Request.Scheme = "https";
+                context.Request.Method = "POST";
+                context.Request.Path = "/api/auth/login";
+                context.Request.ContentType = "application/json";
+                context.Request.Body = new MemoryStream("{}"u8.ToArray());
+            });
+    }
+
+    [Fact]
+    public async Task UnavailableStorage_Returns503WithContractEnvelope()
+    {
+        using var factory = CreateFactory("Testing");
+        using var client = factory.CreateClient();
+        using var response = await client.GetAsync("/_tests/core-envelope/storage");
+        Assert.Equal(HttpStatusCode.ServiceUnavailable, response.StatusCode);
+        using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        Assert.Equal("STORAGE_UNAVAILABLE", json.RootElement.GetProperty("errorCode").GetString());
+        Assert.Empty(json.RootElement.GetProperty("errors").EnumerateArray());
     }
 
     private static WebApplicationFactory<Program> CreateFactory(string environment) =>
@@ -119,6 +173,10 @@ public class CoreEnvelopeTestController : ControllerBase
         Response.ContentType = "text/plain";
         throw new InvalidOperationException("Test exception detail must stay internal.");
     }
+
+    [HttpGet("storage")]
+    public IActionResult Storage() =>
+        throw new FileStorageException("Không thể truy cập kho lưu trữ ảnh.", "STORAGE_UNAVAILABLE");
 
     [HttpGet("success")]
     public IActionResult Success() => Ok(ApiResponse<object>.Ok(new { maDon = 7 }));

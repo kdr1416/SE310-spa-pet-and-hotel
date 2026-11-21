@@ -1,9 +1,10 @@
-using PetSpa.Core.DTOs.Availability ;
-namespace PetSpa.Core.Services ;
+using PetSpa.Core.DTOs.Availability;
+
+namespace PetSpa.Core.Services;
+
 public interface IAvailabilityService
 {
-    Task<AvailabilityResponse> CheckAvailabilityAsync(
-        AvailabilityQuery query,
-        CancellationToken cancellationToken =default
-    );
+    Task<AvailabilityCheck> CheckAvailabilityAsync(AvailabilityQuery query, CancellationToken cancellationToken = default);
 }
+
+public sealed record AvailabilityCheck(AvailabilityResponse? Data, string? ErrorCode = null, string? Message = null);

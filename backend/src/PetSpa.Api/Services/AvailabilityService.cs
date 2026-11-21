@@ -1,145 +1,58 @@
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
-using PetSpa.Core.DTOs.Availability ;
-using PetSpa.Core.Entities.Scheduling;
-using PetSpa.Core.Enums ;
-using PetSpa.Core.Services ;
+using PetSpa.Core.DTOs.Availability;
+using PetSpa.Core.Services;
 
-namespace PetSpa.Api.Services ;
-public class AvailabilityService : IAvailabilityService
+namespace PetSpa.Api.Services;
+
+public sealed class AvailabilityService(PetSpaDbContext context, SpaCapacityCalculator capacity) : IAvailabilityService
 {
-    private readonly PetSpaDbContext _context;
-    
-    // Dependency Injection: .NET tự động truyền DbContext vào đây
-    public AvailabilityService(PetSpaDbContext context)
+    public async Task<AvailabilityCheck> CheckAvailabilityAsync(AvailabilityQuery query, CancellationToken cancellationToken = default)
     {
-        _context = context ;
-    }
-    public async Task<AvailabilityResponse>
-CheckAvailabilityAsync(
-    AvailabilityQuery query,
-    CancellationToken cancellationToken = default
-)
-    {
-        //1. Lấy thông tin KhungGioDatLich và CaLamViec liên quan
-        var khungGio =await _context.KhungGioDatLichSet
-        .Include(k=> k.CaLamViec)
-        .FirstOrDefaultAsync(k=> k.Id == query.MaKhungGio,cancellationToken);
+        if (query.MaKhungGio <= 0 || query.NgayTra == default || query.ThuCung is not { Count: > 0 }
+            || query.ThuCung.Any(pet => pet is null || pet.MaLoaiPhong.HasValue || pet.DichVu is not { Count: > 0 }
+                || pet.DichVu.Any(service => service is null || service.MaCombo.HasValue
+                    || service.MaDichVu is not > 0 || service.MaKhungGio <= 0)))
+            return Invalid("Chọn ít nhất một dịch vụ Spa đơn cho mỗi thú cưng.");
 
-        if (khungGio == null)
+        var lines = query.ThuCung.SelectMany((pet, index) =>
+            pet.DichVu.Select(service => new { PetIndex = index, ServiceId = service.MaDichVu!.Value, SlotId = service.MaKhungGio }))
+            .ToArray();
+        var slotIds = lines.Select(line => line.SlotId).Append(query.MaKhungGio).Distinct().ToArray();
+        var slots = await context.KhungGioDatLichSet.AsNoTracking().Include(slot => slot.CaLamViec)
+            .Where(slot => slotIds.Contains(slot.Id)).ToDictionaryAsync(slot => slot.Id, cancellationToken);
+        if (!slots.TryGetValue(query.MaKhungGio, out var intake))
+            return new AvailabilityCheck(null, "NOT_FOUND", "Không tìm thấy khung giờ đặt lịch.");
+
+        if (slots.Count != slotIds.Length || query.NgayTra != intake.Ngay
+            || slots.Values.Any(slot => slot.Ngay != intake.Ngay || slot.CaLamViec.GioBatDau < intake.CaLamViec.GioBatDau))
+            return Invalid("Ca thực hiện phải từ ca tiếp nhận trở đi, trong cùng ngày.");
+
+        var serviceIds = lines.Select(line => line.ServiceId).Distinct().ToArray();
+        var durations = await context.DichVuSet.AsNoTracking()
+            .Where(service => serviceIds.Contains(service.Id) && service.IsActive
+                && service.LoaiDichVu != "SPA_ADVANCED" && service.TenDichVu != "Cắt tỉa tạo kiểu"
+                && service.ThoiLuongPhut > 0)
+            .ToDictionaryAsync(service => service.Id, service => service.ThoiLuongPhut, cancellationToken);
+        if (durations.Count != serviceIds.Length)
+            return Invalid("Dịch vụ không tồn tại hoặc không thể đặt riêng.");
+
+        var demands = lines.GroupBy(line => line.SlotId).ToDictionary(group => group.Key, group => new SpaSlotDemand(
+            slots[group.Key], group.Select(line => line.PetIndex).Distinct().Count(),
+            group.Sum(line => (long)durations[line.ServiceId])));
+        // A booking with work only in a later shift still needs an open intake shift.
+        demands.TryAdd(intake.Id, new SpaSlotDemand(intake, 0, 0));
+        var result = await capacity.CheckAsync(demands.Values, cancellationToken);
+        var failure = result.Values.FirstOrDefault(slot => slot.CapacityError is not null);
+        if (failure is not null)
+            return new AvailabilityCheck(null, "CAPACITY_EXCEEDED", failure.CapacityError);
+
+        var main = result[intake.Id];
+        return new AvailabilityCheck(new AvailabilityResponse
         {
-            return new AvailabilityResponse
-             {
-                MaKhungGio = query.MaKhungGio ,
-                CoTheDat = false ,
-                LyDo = " Khung giờ đặt lịch không tồn tại"
-             } ;
-        }
-        var ca = khungGio.CaLamViec ;
-        var ngay = khungGio.Ngay ;
-        // 2. Kiểm tra nếu khung giờ đang đóng nhận khách
-        if(!khungGio.MoNhanKhach) 
-        {
-          return new AvailabilityResponse
-          {
-            MaKhungGio = query.MaKhungGio ,
-            CoTheDat = false ,
-            LyDo = "khung giờ hiện đang đóng tiếp nhận khách."
-          };
-        }
-        //3. Kiểm tra ngày nghỉ (ngay_nghi)
-        var laNgayNghi = await _context.NgayNghiSet
-          .AnyAsync(n => n.Ngay == ngay, cancellationToken) ;
-          if (laNgayNghi)
-          {
-            return new AvailabilityResponse
-            {
-                MaKhungGio = query.MaKhungGio ,
-                CoTheDat = false ,
-                LyDo = "Ngày đã chọn rơi vào ngày nghỉ của cơ sở ."
-            } ;
-          }
-          //4. Tính tổng phút của các nhân viên APPROVED có quyền chăm sóc (CARE_UPDATE hoặc ADMIN)
-          var shiftDurationMinutes = (int)(ca.GioKetThuc - ca.GioBatDau).TotalMinutes ;
-          if (shiftDurationMinutes <=0) shiftDurationMinutes = 240 ;
-          // Mặc định cả 4 tiếng nếu chưa set giờ
-          var approvedCareStaffCount = await _context.DangKyCaSet
-          .Where(r => r.Ngay == ngay && r.CaLamViecId == ca.Id && r.TrangThai == ShiftRegistrationState.APPROVED)
-          .Where(r=> r.NhanVien.VaiTro == Role.ADMIN || r.NhanVien.NhanVienQuyenNhanVienItems.Any(q=>
-            q.MaQuyen == "CARE_UPDATE"))
-            .Select(r=> r.NhanVienId)
-            .Distinct()
-            .CountAsync(cancellationToken) ;
-
-            var tongPhutNhanVien = approvedCareStaffCount * shiftDurationMinutes ;
-            var tranPhutHieuLuc = Math.Min(ca.TranPhut, tongPhutNhanVien) ;
-
-            // 5. Tính số lượng pet và số phút dịch vụ mà khách yêu cầu trong query này
-            var soPetYeuCau = query.ThuCung.Count ;
-            // Gom danh sách tất cả mã dịch vụ được chọn của các pet
-            var serviceIds = query.ThuCung.SelectMany(p =>p.DichVu)
-                                    .Where(d => d.MaDichVu.HasValue)
-                                    .Select(d => d.MaDichVu!.Value)
-                                    .Distinct()
-                                    .ToList() ;
-            var serviceDurations = await _context.DichVuSet
-              .Where(s=> serviceIds.Contains(s.Id))
-              .ToDictionaryAsync(s => s.Id, s => s.ThoiLuongPhut,cancellationToken) ;
-            
-            var tongPhutYeuCau = query.ThuCung 
-              .SelectMany(p => p.DichVu)
-              .Where(d => d.MaDichVu.HasValue && serviceDurations.ContainsKey(d.MaDichVu.Value))
-              .Sum(d => serviceDurations[d.MaDichVu!.Value]) ;
-
-            // 6. Tính số slot và số phút còn lại của ca        
-            var slotConLai = Math.Max(0, ca.SucChuaPet - khungGio.SlotDaDat) ;
-            var phutConLai = Math.Max(0, tranPhutHieuLuc - khungGio.PhutDaGiu) ;
-
-            //7. kiểm tra 2 trần đồng thời
-            if (approvedCareStaffCount == 0)
-            {
-                return new AvailabilityResponse{
-                    MaKhungGio = query.MaKhungGio,
-                    SlotConLai = slotConLai,
-                    PhutConLai = 0 ,
-                    CoTheDat = false,
-                    LyDo = "Ca làm việc chưa có nhân sự chăm sóc được phê duyệt."
-                } ;
-            }
-
-            if(soPetYeuCau > slotConLai)
-            {
-                return new AvailabilityResponse
-                {
-                    MaKhungGio = query.MaKhungGio,
-                    SlotConLai = slotConLai ,
-                    PhutConLai = phutConLai ,
-                    CoTheDat = false ,
-                    LyDo = "Số lượng thú cưng vượt quá sức chứa còn lại của ca."
-
-                };
-            }
-            
-            if (tongPhutYeuCau > phutConLai)
-            {
-                return new AvailabilityResponse
-                {
-                    MaKhungGio = query.MaKhungGio ,
-                    SlotConLai = slotConLai ,
-                    PhutConLai = phutConLai,
-                    CoTheDat = false ,
-                    LyDo = "Tổng thời gian dịch vụ vượt quá số phút khả dụng của ca."
-
-                } ;
-            }
-            //Đạt tất cả điều kiện : Có thể đặt !
-            return new AvailabilityResponse
-            {
-                MaKhungGio = query.MaKhungGio,
-                SlotConLai = slotConLai,
-                PhutConLai = phutConLai,
-                CoTheDat = true ,
-                LyDo =null
-            } ;
+            MaKhungGio = intake.Id, SlotConLai = main.SeatsLeft, PhutConLai = main.MinutesLeft, CoTheDat = true
+        });
     }
+
+    private static AvailabilityCheck Invalid(string message) => new(null, "VALIDATION_FAILED", message);
 }
