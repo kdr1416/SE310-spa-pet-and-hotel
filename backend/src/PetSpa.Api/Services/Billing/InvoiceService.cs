@@ -1,7 +1,5 @@
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
-using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PetSpa.Api.Data;
@@ -294,39 +292,7 @@ public class InvoiceService(PetSpaDbContext context, IConfiguration configuratio
             .Include(i => i.DonDatLich).ThenInclude(b => b.KhungGio)
             .Include(i => i.CtHoaDonHoaDonItems)
             .SingleOrDefaultAsync(i => i.Id == invoiceId, cancellationToken);
-        if (invoice is null)
-            return null;
-
-        var contact = JsonSerializer.Deserialize<InvoiceContact>(invoice.KhachSnapshot, JsonOptions);
-        // Early invoice snapshots used sdt and omitted the email. Fill missing fields from the booking snapshot.
-        contact = new InvoiceContact(
-            contact?.HoTen ?? invoice.DonDatLich.TenNguoiDat,
-            contact?.SoDienThoai ?? invoice.DonDatLich.SoDienThoaiSnapshot,
-            contact?.Email ?? invoice.DonDatLich.EmailSnapshot);
-        var lines = invoice.CtHoaDonHoaDonItems.OrderBy(line => line.Id).Select(line => new InvoiceLineItemDto(
-            line.Id, line.LoaiKhoan, line.ChiTietDonId, line.DichVuTrongDonId, line.PhuPhiId, line.TenPetSnapshot,
-            line.TenKhoanMuc, line.SizeSnapshot?.ToString(), line.SoLuong, line.DonGiaSnapshot, line.ThanhTien,
-            line.DienGiai)).ToList();
-
-        return new InvoiceResponseDto(invoice.Id, invoice.MaHoaDon, invoice.DonDatLichId, invoice.ThayTheHoaDonId,
-            invoice.TrangThai.ToString(), invoice.CreatedAt, invoice.TaoBoi.TenNhanVien, contact, invoice.DonDatLich.KhungGio.Ngay,
-            lines, invoice.TongTien, invoice.CocKhauTru, invoice.ConPhaiTra, invoice.PaidAt, invoice.ThuHoiAt, BuildQr(invoice));
-    }
-
-    private InvoiceQr? BuildQr(HoaDon invoice)
-    {
-        if (invoice.TrangThai != InvoiceState.UNPAID || invoice.ConPhaiTra <= 0
-            || !Uri.TryCreate(configuration["Billing:VietQrImageUrl"], UriKind.Absolute, out var image)
-            || image.Scheme != Uri.UriSchemeHttps)
-            return null;
-
-        var note = $"{invoice.DonDatLichId} {invoice.MaHoaDon}";
-        var url = QueryHelpers.AddQueryString(image.AbsoluteUri, new Dictionary<string, string?>
-        {
-            ["amount"] = invoice.ConPhaiTra.ToString("0", CultureInfo.InvariantCulture),
-            ["addInfo"] = note
-        });
-        return new InvoiceQr(url, invoice.ConPhaiTra, note);
+        return invoice is null ? null : InvoiceProjection.Project(invoice, configuration, includeInternalDetails: true);
     }
 
     private async Task<ApiResponse<InvoiceResponseDto>?> ReadReplayAsync(

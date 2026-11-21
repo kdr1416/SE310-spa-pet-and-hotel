@@ -600,6 +600,9 @@ public sealed class BookingCreateEndpointTests
         public Task? WaitFor { get; set; }
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
+        public Task SendBookingConfirmedAsync(string recipient, string trackingCode, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("E04 must not send an approval email.");
+
         public async Task SendTrackingCodeAsync(string recipient, string trackingCode, CancellationToken cancellationToken)
         {
             Interlocked.Increment(ref _attempts);
