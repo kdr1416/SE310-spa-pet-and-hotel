@@ -184,6 +184,56 @@ public sealed class BookingManagementEndpointTests
     }
 
     [Fact]
+    public async Task Tracking_FinalHandoverDuringLookup_ReturnsOneBookingSnapshot()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using (var db = fixture.Database.CreateContext())
+        {
+            var booking = await db.DonDatLichSet.SingleAsync(booking => booking.Id == 1);
+            booking.TrangThai = BookingState.IN_PROGRESS;
+            var pets = await db.ChiTietDonSet.Where(pet => pet.DonDatLichId == booking.Id)
+                .OrderBy(pet => pet.Id).ToArrayAsync();
+            pets[0].TrangThaiChamSoc = PetCareState.DONE;
+            pets[0].BanGiaoAt = Now;
+            pets[1].TrangThaiChamSoc = PetCareState.READY;
+            db.Add(new Quyen { MaQuyen = "PET_HANDOVER", TenQuyen = "Bàn giao" });
+            db.Add(new NhanVienQuyen { NhanVienId = 1, MaQuyen = "PET_HANDOVER", CapBoiId = 2 });
+            db.Add(new HoaDon
+            {
+                MaHoaDon = "HD-BAN-GIAO", DonDatLichId = booking.Id, TaoBoiId = 1, ThuBoiId = 1,
+                TongTien = 100_000m, ConPhaiTra = 100_000m, TrangThai = InvoiceState.PAID, PaidAt = Now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        fixture.TrackingRead.Arm();
+        var lookup = fixture.Public.PostAsJsonAsync(Tracking,
+            new { soDienThoai = Phone, trackingCode = TrackingCode }, timeout.Token);
+        try
+        {
+            await fixture.TrackingRead.BeforePets.Task.WaitAsync(timeout.Token);
+            using var handover = await fixture.Staff.PostAsJsonAsync("/api/internal/booking-pets/2/handover",
+                new { requestId = Guid.NewGuid(), xacNhanDaNhan = true }, timeout.Token);
+            Assert.Equal("DONE", (string?)(await DataAsync(handover))["trangThai"]);
+        }
+        finally
+        {
+            fixture.TrackingRead.Resume.TrySetResult();
+        }
+
+        using var inFlightLookup = await lookup;
+        var duringHandover = await DataAsync(inFlightLookup);
+        Assert.Equal("IN_PROGRESS", (string?)duringHandover["trangThai"]);
+        Assert.Equal("READY", (string?)duringHandover["thuCung"]![1]!["trangThai"]);
+
+        using var freshLookup = await LookupAsync(fixture.Public, Phone, TrackingCode);
+        var afterHandover = await DataAsync(freshLookup);
+        Assert.Equal("COMPLETED", (string?)afterHandover["trangThai"]);
+        Assert.All(afterHandover["thuCung"]!.AsArray(), pet => Assert.Equal("DONE", (string?)pet!["trangThai"]));
+    }
+
+    [Fact]
     public async Task Cancel_ConcurrentReplayReleasesOriginalSeatAndMinutesOncePerSlot()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -484,6 +534,7 @@ public sealed class BookingManagementEndpointTests
         public TestStorage Storage { get; } = new();
         public TestEmail Email { get; }
         public SlotLockGate SlotLock { get; } = new();
+        public TrackingReadGate TrackingRead { get; } = new();
         public HttpClient Staff { get; }
         public HttpClient Admin { get; }
         public HttpClient Unprivileged { get; }
@@ -502,7 +553,7 @@ public sealed class BookingManagementEndpointTests
                     services.AddSingleton<TimeProvider>(Clock);
                     services.AddSingleton<IFileStorageService>(Storage);
                     services.AddSingleton<IEmailSender>(Email);
-                    services.AddDbContext<PetSpaDbContext>((_, options) => options.AddInterceptors(SlotLock));
+                    services.AddDbContext<PetSpaDbContext>((_, options) => options.AddInterceptors(SlotLock, TrackingRead));
                 });
             });
             Staff = CreateClient(Employee(1));
@@ -645,6 +696,30 @@ public sealed class BookingManagementEndpointTests
                 Interlocked.Exchange(ref _armed, 0) == 1)
             {
                 BeforeLock.TrySetResult();
+                await Resume.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
+    }
+
+    private sealed class TrackingReadGate : DbCommandInterceptor
+    {
+        private int _armed;
+        public TaskCompletionSource BeforePets { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            // A split SELECT for the pets runs after the parent booking row has already been read.
+            if (command.CommandText.Contains("FROM don_dat_lich AS", StringComparison.Ordinal) &&
+                command.CommandText.Contains("chi_tiet_don AS", StringComparison.Ordinal) &&
+                Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                BeforePets.TrySetResult();
                 await Resume.Task.WaitAsync(cancellationToken);
             }
             return result;
