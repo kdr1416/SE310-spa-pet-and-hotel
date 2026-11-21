@@ -38,7 +38,9 @@ public sealed class TrackingService(PetSpaDbContext db, IFileStorageService stor
             var display = BookingProjection.ProjectCurrent(booking, configuration);
             var files = booking.ChiTietDonDonDatLichItems
                 .SelectMany(pet => pet.NhatKyChamSocChiTietDonItems)
-                .Where(log => !string.IsNullOrWhiteSpace(log.ObjectPath))
+                .Where(log => log.ObjectPath is { } path && !string.IsNullOrWhiteSpace(path)
+                    && !path.StartsWith("check-in/", StringComparison.Ordinal)
+                    && !path.StartsWith("care-logs/", StringComparison.Ordinal))
                 .ToDictionary(log => log.Id, log => log.ObjectPath!);
             var signedUrls = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (var log in display.ThuCung.SelectMany(pet => pet.NhatKy))

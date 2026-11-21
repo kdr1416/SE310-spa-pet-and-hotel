@@ -20,6 +20,7 @@ public sealed class BookingManagementService(
     private const string ConfirmOperation = "BOOKING_CONFIRM";
     private const string CancelOperation = "BOOKING_CANCEL";
     private const string Permission = "BOOKING_APPROVE";
+    private const string NoShowAttestation = "Khách không liên hệ";
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     public async Task<ApiResponse<PageBooking>> ListAsync(
@@ -205,9 +206,12 @@ public sealed class BookingManagementService(
         {
             case CancellationType.STAFF_REJECTED when booking.TrangThai != BookingState.PENDING:
                 return InvalidTransition("Chỉ có thể từ chối lịch hẹn đang chờ duyệt.");
-            // The actor declares the absence of customer contact in the required reason.
             case CancellationType.NO_SHOW when now < booking.MocCuoiCa.AddMinutes(30):
                 return InvalidTransition("Chỉ có thể đánh dấu vắng mặt sau khi ca kết thúc 30 phút.");
+            case CancellationType.NO_SHOW when !reason.Equals(NoShowAttestation, StringComparison.OrdinalIgnoreCase) &&
+                !(reason.Length > NoShowAttestation.Length + 1 &&
+                    reason.StartsWith(NoShowAttestation + ":", StringComparison.OrdinalIgnoreCase)):
+                return InvalidTransition("Lý do vắng mặt phải xác nhận “Khách không liên hệ”.");
             case CancellationType.STAFF_CANCELLED or CancellationType.CUSTOMER_CANCELLED
                 when booking.BatDauDuKien - now < TimeSpan.FromHours(2) && role != Role.ADMIN:
                 return ApiResponse<BookingResponse>.Fail("Chỉ quản trị viên được hủy trong vòng 2 giờ trước ca.", "FORBIDDEN");
@@ -225,6 +229,11 @@ public sealed class BookingManagementService(
             var slots = await db.KhungGioDatLichSet.FromSqlInterpolated(
                     $"SELECT * FROM khung_gio_dat_lich WHERE id = ANY({slotIds}) ORDER BY id FOR UPDATE")
                 .ToListAsync(cancellationToken);
+
+            // EF can reuse the intake slot loaded with the booking before the locks were acquired.
+            if (allocations.ContainsKey(booking.KhungGioId))
+                await db.Entry(booking.KhungGio).ReloadAsync(cancellationToken);
+
             if (slots.Count != allocations.Count || slots.Any(slot =>
                     slot.SlotDaDat < allocations[slot.Id].Seats || slot.PhutDaGiu < allocations[slot.Id].Minutes))
                 return InvalidTransition("Không thể đối chiếu công suất đã giữ cho lịch hẹn.");
