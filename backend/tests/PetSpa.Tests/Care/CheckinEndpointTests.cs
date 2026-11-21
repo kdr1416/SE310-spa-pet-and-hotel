@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -7,6 +8,7 @@ using System.Text.Json.Serialization;
 using FluentAssertions;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -497,6 +499,64 @@ public class CheckinEndpointTests
         (await db.ChiTietDonSet.AsNoTracking().SingleAsync()).CheckInAt.Should().BeNull();
         (await db.NhatKyChamSocSet.CountAsync()).Should().Be(0);
         storage.Deletes.Should().ContainSingle().Which.Should().Be(storage.Uploads.Single());
+    }
+
+    [Fact]
+    public async Task CheckIn_ConcurrentCommitDuringPreflightReturnsCommittedReplay()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var db = database.CreateContext();
+        SeedCheckinScenario(db);
+        var storage = new CareTestSupport.Storage();
+        var gate = new PreflightGate();
+        await using var postgres = new PostgresWebApplicationFactory(database.ConnectionString);
+        await using var host = CareTestSupport.Configure(postgres, storage);
+        await using var factory = host.WithWebHostBuilder(builder => builder.ConfigureServices(services =>
+            services.AddDbContext<PetSpaDbContext>((_, options) => options.AddInterceptors(gate))));
+        using var client = CreateAuthorizedClient(factory);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var payload = CreateValidPayload();
+        using var pendingForm = BuildCheckinForm(payload, ValidPngBytes);
+        var pending = client.PostAsync("/api/internal/booking-pets/10/check-in", pendingForm, timeout.Token);
+        try
+        {
+            // The pending request has already missed the first audit lookup.
+            await gate.BeforeRead.Task.WaitAsync(timeout.Token);
+            using var winningForm = BuildCheckinForm(payload, ValidPngBytes);
+            using var winner = await client.PostAsync("/api/internal/booking-pets/10/check-in", winningForm, timeout.Token);
+            winner.StatusCode.Should().Be(HttpStatusCode.OK);
+        }
+        finally
+        {
+            gate.Resume.TrySetResult();
+        }
+
+        using var replay = await pending;
+        replay.StatusCode.Should().Be(HttpStatusCode.OK);
+        var replayBody = await replay.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>(timeout.Token);
+        replayBody!.Data!.TrangThai.Should().Be("WAITING");
+        storage.Uploads.Should().ContainSingle();
+        (await db.AuditLogSet.CountAsync(timeout.Token)).Should().Be(1);
+    }
+
+    private sealed class PreflightGate : DbCommandInterceptor
+    {
+        private int _armed = 1;
+        public TaskCompletionSource BeforeRead { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FROM cau_hinh_he_thong", StringComparison.Ordinal) &&
+                Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                BeforeRead.TrySetResult();
+                await Resume.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
     }
 
     [Fact]

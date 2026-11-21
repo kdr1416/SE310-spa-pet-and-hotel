@@ -273,6 +273,43 @@ public class CareLogsEndpointTests
         db.SaveChanges();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CareLogs_ReplayRedactsPhotoAfterAssignmentOrShiftRevocation(bool revokeAssignment)
+    {
+        var storage = new CareTestSupport.Storage();
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db), storage);
+        using var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var request = new CareLogCreate { RequestId = Guid.NewGuid(), GhiChu = "Theo dõi sau khi tắm" };
+        using var form = BuildCareLogForm(request, ValidPngBytes);
+        using var first = await client.PostAsync("/api/internal/booking-pets/10/care-logs", form);
+        first.StatusCode.Should().Be(HttpStatusCode.Created);
+        var committed = (await first.Content.ReadFromJsonAsync<ApiResponse<CareLog>>())!.Data!;
+        committed.AnhUrl.Should().StartWith("https://photo.test/");
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        if (revokeAssignment)
+            (await db.ChiTietDonSet.SingleAsync()).NhanVienId = null;
+        else
+            (await db.DangKyCaSet.SingleAsync(shift => shift.NhanVienId == 202)).TrangThai = ShiftRegistrationState.REJECTED;
+        await db.SaveChangesAsync();
+
+        using var retryForm = BuildCareLogForm(request, ValidPngBytes);
+        using var retry = await client.PostAsync("/api/internal/booking-pets/10/care-logs", retryForm);
+
+        retry.StatusCode.Should().Be(HttpStatusCode.OK);
+        var replay = (await retry.Content.ReadFromJsonAsync<ApiResponse<CareLog>>())!.Data!;
+        replay.MaNhatKy.Should().Be(committed.MaNhatKy);
+        replay.GhiChu.Should().Be(committed.GhiChu);
+        replay.AnhUrl.Should().BeNull();
+        storage.Reads.Should().ContainSingle();
+        storage.Uploads.Should().ContainSingle();
+    }
+
     [Fact]
     public async Task CareLogs_ShiftRevokedDuringUploadRejectsLogAndDeletesOrphan()
     {
