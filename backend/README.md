@@ -101,3 +101,9 @@ dotnet test backend/PetSpa.sln
 Mỗi test seed tạo một database `petspa_test_<GUID>`, áp dụng migration hiện có vào đúng database mới đó, rồi xóa riêng database vừa tạo khi kết thúc. Không reset database mà biến môi trường trỏ tới. Thiếu biến kết nối thì test báo lỗi cấu hình, không âm thầm skip hoặc dùng database runtime.
 
 CI backend dùng PostgreSQL 17 tạm của GitHub Actions và đặt biến này tự động. Chế độ trust chỉ nằm trong service test tạm bind `127.0.0.1`; không áp dụng cấu hình đó lên Neon hoặc server của nhóm. Các test model/envelope cũ vẫn không cần truy cập database.
+
+## Cấu hình Task 01
+
+- **Catalog Seed trên staging** — Đặt `CatalogSeed__Enabled=true` và `CatalogSeed__AdminId` bằng ID của Admin đang hoạt động. Giữ `SeedData__Enabled=false`. Catalog Seed tạo `FUR_CONDITIONS` nếu chưa có hoặc thêm các mã mặc định còn thiếu. Tên, trạng thái, cờ phụ phí và trường tùy chỉnh đã lưu được giữ nguyên. Chạy trên database đã có schema và tắt cờ sau khi kiểm tra.
+- **Rate limit E01** — Mặc định mỗi IP có 20 request trong 60 giây. Có thể cấu hình qua `RateLimiting__Login__PermitLimit` và `RateLimiting__Login__WindowSeconds`. Nếu API đứng sau reverse proxy, khai báo IP của proxy tin cậy qua `ReverseProxy__KnownProxies__0` và các phần tử tiếp theo để xác định đúng IP khách.
+- **Adapter ảnh private** — Cấu hình `Supabase__Storage__Url`, `Supabase__Storage__Bucket` và `Supabase__Storage__ServiceRoleKey` ngoài Git. Bucket phải private. Adapter kiểm tra giới hạn 5 MiB và chữ ký JPEG/PNG/WebP, dùng object path do server sinh và ký URL đọc trong 300 giây. Endpoint gọi phải xác minh quyền trước khi ký URL. Adapter chưa nối với các endpoint hiện có. Trước khi dùng để nhận ảnh thật, luồng upload còn cần kiểm tra giải mã đầy đủ.

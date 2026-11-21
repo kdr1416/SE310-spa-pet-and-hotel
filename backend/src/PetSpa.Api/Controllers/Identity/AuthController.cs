@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
 using PetSpa.Api.Services.Identity;
@@ -16,6 +17,7 @@ public class AuthController(PetSpaDbContext dbContext, ITokenService tokenServic
 {
     [HttpPost("login")]
     [AllowAnonymous]
+    [EnableRateLimiting("login")]
     public async Task<ActionResult<ApiResponse<Session>>> Login([FromBody] Login request)
     {
         var nhanVien = await dbContext.NhanVienSet

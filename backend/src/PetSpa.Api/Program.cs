@@ -1,7 +1,12 @@
+using System.Globalization;
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.HttpOverrides;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -11,6 +16,7 @@ using PetSpa.Api.Middleware;
 using PetSpa.Api.Services.Billing;
 using PetSpa.Api.Services.Care;
 using PetSpa.Api.Services.Identity;
+using PetSpa.Api.Services.Storage;
 using PetSpa.Api.Services;
 using PetSpa.Core.Common;
 using PetSpa.Core.Interfaces.Care;
@@ -45,14 +51,64 @@ builder.Services.AddControllers()
         };
     });
 
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor;
+    foreach (var proxy in builder.Configuration.GetSection("ReverseProxy:KnownProxies").Get<string[]>() ?? [])
+        options.KnownProxies.Add(IPAddress.Parse(proxy));
+});
+
+builder.Services.AddRateLimiter(options =>
+{
+    options.AddPolicy("login", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.MapToIPv6().ToString() ?? "unknown", _ =>
+        {
+            var config = context.RequestServices.GetRequiredService<IConfiguration>();
+            return new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = config.GetValue("RateLimiting:Login:PermitLimit", 20),
+                Window = TimeSpan.FromSeconds(config.GetValue("RateLimiting:Login:WindowSeconds", 60)),
+                QueueLimit = 0,
+                AutoReplenishment = true
+            };
+        }));
+    options.OnRejected = async (rejection, cancellationToken) =>
+    {
+        var context = rejection.HttpContext;
+        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        var retryAfter = rejection.Lease.TryGetMetadata(MetadataName.RetryAfter, out var estimate)
+            ? estimate.TotalSeconds
+            : context.RequestServices.GetRequiredService<IConfiguration>().GetValue("RateLimiting:Login:WindowSeconds", 60);
+        context.Response.Headers.RetryAfter = Math.Max(1, Math.Ceiling(retryAfter)).ToString(CultureInfo.InvariantCulture);
+        await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(
+            "Vui lòng thử đăng nhập lại sau.", "RATE_LIMITED", traceId: context.TraceIdentifier), cancellationToken);
+    };
+});
+
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
+builder.Services.AddScoped<SpaCapacityCalculator>();
 builder.Services.AddScoped<ICheckinService, CheckinService>();
 builder.Services.AddScoped<ICareService, CareService>();
 builder.Services.AddScoped<IHandoverService, HandoverService>();
 
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
-    .AddJwtBearer();
+    .AddJwtBearer(options =>
+    {
+        options.Events = new JwtBearerEvents
+        {
+            OnChallenge = async challenge =>
+            {
+                challenge.HandleResponse();
+                var context = challenge.HttpContext;
+                context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+                context.Response.Headers.WWWAuthenticate = JwtBearerDefaults.AuthenticationScheme;
+                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(
+                    "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.", "UNAUTHENTICATED",
+                    traceId: context.TraceIdentifier), context.RequestAborted);
+            }
+        };
+    });
 
 builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme)
     .Configure<IConfiguration>((options, config) =>
@@ -75,6 +131,9 @@ builder.Services.AddOptions<JwtBearerOptions>(JwtBearerDefaults.AuthenticationSc
             };
         }
     });
+
+builder.Services.AddHttpClient<IFileStorageService, SupabaseFileStorage>()
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
 
 builder.Services.AddOpenApi();
 builder.Services.AddDbContext<PetSpaDbContext>(options =>
@@ -104,6 +163,13 @@ if (app.Configuration.GetValue<bool>("SeedData:Enabled"))
     await DbInitializer.InitializeAsync(scope.ServiceProvider.GetRequiredService<PetSpaDbContext>(), options, app.Environment);
 }
 
+if (app.Configuration.GetValue<bool>("CatalogSeed:Enabled"))
+{
+    using var scope = app.Services.CreateScope();
+    await CatalogSeed.InitializeAsync(scope.ServiceProvider.GetRequiredService<PetSpaDbContext>(),
+        app.Configuration.GetValue<int>("CatalogSeed:AdminId"));
+}
+
 app.UseMiddleware<GlobalExceptionMiddleware>();
 
 if (app.Environment.IsDevelopment())
@@ -111,8 +177,11 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+app.UseForwardedHeaders();
 app.UseHttpsRedirection();
+app.UseRouting();
 app.UseCors("AllowFrontend");
+app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 

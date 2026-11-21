@@ -1,4 +1,5 @@
 using PetSpa.Core.Common;
+using PetSpa.Api.Services.Storage;
 
 namespace PetSpa.Api.Middleware;
 
@@ -22,9 +23,18 @@ public class GlobalExceptionMiddleware(RequestDelegate next, ILogger<GlobalExcep
             }
 
             context.Response.Clear();
-            context.Response.StatusCode = StatusCodes.Status500InternalServerError;
-            var response = ApiResponse<object>.Fail(
-                "Đã xảy ra lỗi hệ thống nội bộ.", "INTERNAL_SERVER_ERROR", null, traceId);
+            var (status, message, code) = exception switch
+            {
+                FileStorageException { ErrorCode: "FILE_TOO_LARGE" } storage =>
+                    (StatusCodes.Status413PayloadTooLarge, storage.Message, storage.ErrorCode),
+                FileStorageException { ErrorCode: "UNSUPPORTED_FILE" } storage =>
+                    (StatusCodes.Status415UnsupportedMediaType, storage.Message, storage.ErrorCode),
+                FileStorageException { ErrorCode: "STORAGE_UNAVAILABLE" } storage =>
+                    (StatusCodes.Status503ServiceUnavailable, storage.Message, storage.ErrorCode),
+                _ => (StatusCodes.Status500InternalServerError, "Đã xảy ra lỗi hệ thống nội bộ.", "INTERNAL_SERVER_ERROR")
+            };
+            context.Response.StatusCode = status;
+            var response = ApiResponse<object>.Fail(message, code, traceId: traceId);
             await context.Response.WriteAsJsonAsync(response, options: null, contentType: "application/json");
         }
     }

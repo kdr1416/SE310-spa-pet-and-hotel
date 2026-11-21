@@ -44,14 +44,7 @@ public static class DbInitializer
                 GiaTri = "{\"otpEmail\":false,\"cocHotel\":false,\"giuCho\":false}"
             });
         }
-        if (!await context.CauHinhHeThongSet.AnyAsync(s => s.Khoa == "FUR_CONDITIONS", cancellationToken))
-        {
-            context.CauHinhHeThongSet.Add(new CauHinhHeThong
-            {
-                Khoa = "FUR_CONDITIONS", PhienBan = 1, SuaBoiId = admin.Id,
-                GiaTri = "[{\"ma\":\"BINH_THUONG\",\"ten\":\"Bình thường\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"ROI_NHE\",\"ten\":\"Rối nhẹ\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"ROI_NANG\",\"ten\":\"Rối nặng\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":true},{\"ma\":\"VE_RAN\",\"ten\":\"Ve rận\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"LONG_NGAN\",\"ten\":\"Lông ngắn\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false},{\"ma\":\"LONG_DAI\",\"ten\":\"Lông dài\",\"dangHoatDong\":true,\"choPhepPhuPhiGoRoi\":false}]"
-            });
-        }
+        await CatalogSeed.EnsureFurConditionsAsync(context, admin.Id, cancellationToken);
         await context.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -111,18 +104,18 @@ public static class DbInitializer
         }
         await context.SaveChangesAsync(cancellationToken);
 
-        (string Name, int Minutes, decimal[] Prices)[] samples =
+        (string Name, string Type, int Minutes, decimal[] Prices)[] samples =
         [
-            ("Tắm sấy vệ sinh", 60, [150000, 200000, 250000, 300000]),
-            ("Cắt tỉa tạo kiểu", 90, [250000, 350000, 450000, 600000]),
-            ("Vệ sinh tai", 30, [50000, 70000, 90000, 110000])
+            ("Tắm sấy vệ sinh", "SPA", 60, [150000, 200000, 250000, 300000]),
+            ("Cắt tỉa tạo kiểu", "SPA_ADVANCED", 90, [250000, 350000, 450000, 600000]),
+            ("Vệ sinh tai", "SPA", 30, [50000, 70000, 90000, 110000])
         ];
         foreach (var sample in samples)
         {
             var service = await context.DichVuSet.SingleOrDefaultAsync(s => s.TenDichVu == sample.Name, cancellationToken);
             if (service is null)
             {
-                service = new DichVu { TenDichVu = sample.Name, LoaiDichVu = "SPA", ThoiLuongPhut = sample.Minutes,
+                service = new DichVu { TenDichVu = sample.Name, LoaiDichVu = sample.Type, ThoiLuongPhut = sample.Minutes,
                     IsActive = true, YeuCauTiemChung = false };
                 context.DichVuSet.Add(service);
                 await context.SaveChangesAsync(cancellationToken);
