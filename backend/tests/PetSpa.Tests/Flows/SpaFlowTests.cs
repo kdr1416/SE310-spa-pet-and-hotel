@@ -163,11 +163,16 @@ public class SpaFlowTests
             var savedPhotos = await photoDb.NhatKyChamSocSet
                 .Where(log => log.ChiTietDon.DonDatLichId == booking.MaDon && log.ObjectPath != null).ToListAsync();
             Assert.Equal(7, savedPhotos.Count); // Two check-ins, two starts, two finished photos, one progress photo.
+            var savedPaths = savedPhotos.Select(log => log.ObjectPath!).Distinct().Order(StringComparer.Ordinal).ToArray();
+            Assert.Equal(5, savedPaths.Length);
+            Assert.Equal(savedPaths, storage.Uploads.Order(StringComparer.Ordinal));
             foreach (var pet in tracking.ThuCung)
             {
-                var expectedLogIds = savedPhotos.Where(log => log.ChiTietDonId == pet.MaChiTietDon)
-                    .Select(log => log.Id).Order().ToArray();
-                Assert.Equal(expectedLogIds, pet.NhatKy.Select(log => log.MaNhatKy).Order().ToArray());
+                var photos = savedPhotos.Where(log => log.ChiTietDonId == pet.MaChiTietDon).ToArray();
+                Assert.Equal(photos.Select(log => log.Id).Order(), pet.NhatKy.Select(log => log.MaNhatKy).Order());
+                var checkinPhoto = Assert.Single(photos, log => log.LoaiNhatKy == "CHECK_IN");
+                var startPhoto = Assert.Single(photos, log => log.LoaiNhatKy == "CARE_START");
+                Assert.Equal(checkinPhoto.ObjectPath, startPhoto.ObjectPath);
             }
             var publicProgress = Assert.Single(publicLogs, log => log.LoaiNhatKy == "CARE_LOG");
             Assert.Equal(progress.MaNhatKy, publicProgress.MaNhatKy);
@@ -177,8 +182,7 @@ public class SpaFlowTests
             var signedUrls = storage.Reads.Skip(readsBeforeTracking).Select((path, index) =>
                 (Path: path, Url: $"https://photo.test/sign/{readsBeforeTracking + index + 1}"))
                 .ToDictionary(item => item.Path, item => item.Url, StringComparer.Ordinal);
-            Assert.Equal(savedPhotos.Select(log => log.ObjectPath!).Distinct().Order(StringComparer.Ordinal),
-                signedUrls.Keys.Order(StringComparer.Ordinal));
+            Assert.Equal(savedPaths, signedUrls.Keys.Order(StringComparer.Ordinal));
             foreach (var savedPhoto in savedPhotos)
             {
                 var log = Assert.Single(publicLogs, log => log.MaNhatKy == savedPhoto.Id);

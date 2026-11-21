@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Data;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -8,6 +9,7 @@ using PetSpa.Api.Data;
 using PetSpa.Api.Services.Storage;
 using PetSpa.Core.Common;
 using PetSpa.Core.DTOs.Booking;
+using PetSpa.Core.Entities.Booking;
 using PetSpa.Core.Entities.Identity;
 
 namespace PetSpa.Api.Services.Booking;
@@ -28,10 +30,15 @@ public sealed class TrackingService(PetSpaDbContext db, IFileStorageService stor
             if (bookingId is null)
                 return (NotFound(), null);
 
-            // Only load and sign assets for a verified pair, after releasing its limiter transaction.
-            var booking = await BookingProjection.IncludeDetails(db.DonDatLichSet.AsNoTracking())
-                .SingleOrDefaultAsync(booking => booking.Id == bookingId && booking.TrackingCode == pair.TrackingCode &&
-                    booking.SoDienThoaiSnapshot == pair.SoDienThoai, cancellationToken);
+            // The split queries must share one snapshot. The limiter transaction has already committed.
+            DonDatLich? booking;
+            await using (var snapshot = await db.Database.BeginTransactionAsync(IsolationLevel.RepeatableRead, cancellationToken))
+            {
+                booking = await BookingProjection.IncludeDetails(db.DonDatLichSet.AsNoTracking())
+                    .SingleOrDefaultAsync(booking => booking.Id == bookingId && booking.TrackingCode == pair.TrackingCode &&
+                        booking.SoDienThoaiSnapshot == pair.SoDienThoai, cancellationToken);
+                await snapshot.CommitAsync(cancellationToken);
+            }
             if (booking is null)
                 return (NotFound(), null);
 
