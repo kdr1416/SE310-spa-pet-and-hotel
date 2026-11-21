@@ -3,41 +3,35 @@ using PetSpa.Core.Enums;
 
 namespace PetSpa.Core.DTOs.Billing;
 
-public class InvoiceLineItemDto
+public sealed record CreateInvoiceCommand(Guid RequestId);
+
+public sealed record InvoiceContact(string HoTen, string SoDienThoai, string Email);
+
+public sealed record InvoiceQr(string ImageUrl, decimal SoTien, string NoiDungChuyenKhoan);
+
+public sealed record InvoiceLineItemDto(
+    int MaDongHoaDon, string LoaiKhoan, int? MaChiTietDon, int? MaDichVuTrongDon, int? MaPhuPhi,
+    string? TenPet, string TenKhoan, string? Size, int SoLuong, decimal DonGia, decimal ThanhTien,
+    string? DienGiai);
+
+public sealed record InvoiceResponseDto(
+    int MaHoaDon, string SoHoaDon, int MaDon, int? ThayTheHoaDon, string TrangThai,
+    DateTimeOffset LapAt, string NguoiLap, InvoiceContact Khach, DateOnly NgayHen,
+    List<InvoiceLineItemDto> DongTien, decimal TongTien, decimal CocKhauTru, decimal ConPhaiTra,
+    DateTimeOffset? PaidAt, DateTimeOffset? ThuHoiAt, InvoiceQr? Qr);
+
+public sealed class CheckoutRequestDto
 {
-    public int Id { get; set; }
-    public string LoaiKhoan { get; set; } = string.Empty; // SPA, HOTEL, PHU_PHI
-    public string? TenPetSnapshot { get; set; }
-    public string TenKhoanMuc { get; set; } = string.Empty;
-    public string? SizeSnapshot { get; set; }
-    public int SoLuong { get; set; }
-    public decimal DonGiaSnapshot { get; set; }
-    public decimal ThanhTien { get; set; }
-    public string? DienGiai { get; set; }
+    public Guid RequestId { get; init; }
+    [JsonRequired]
+    public decimal SoTienThucNhan { get; init; }
+    [JsonRequired]
+    public decimal SoTienDaTraLai { get; init; }
+    [JsonRequired]
+    [JsonConverter(typeof(PaymentMethodConverter))]
+    public PaymentMethod PhuongThuc { get; init; }
+    public string? ThamChieu { get; init; }
+    public string? BangChungTraThua { get; init; }
 }
 
-public class InvoiceResponseDto
-{
-    public int Id { get; set; }
-    public string MaHoaDon { get; set; } = string.Empty;
-    public string TrangThai { get; set; } = string.Empty; // UNPAID, PAID, REVOKED
-    public decimal TongTien { get; set; }
-    public decimal CocKhauTru { get; set; }
-    public decimal ConPhaiTra { get; set; }
-    public int DonDatLichId { get; set; }
-    public DateTimeOffset? PaidAt { get; set; }
-    public DateTimeOffset CreatedAt { get; set; }
-    public List<InvoiceLineItemDto> ChiTiet { get; set; } = [];
-}
-
-public class CheckoutRequestDto
-{
-    public Guid RequestId { get; set; }
-    public decimal SoTienThucNhan { get; set; }
-    public decimal SoTienDaTraLai { get; set; }
-    [JsonConverter(typeof(JsonStringEnumConverter))]
-    public PaymentMethod PhuongThuc { get; set; } // CASH, BANK_TRANSFER
-    public string? NganHang { get; set; }
-    public string? MaGiaoDich { get; set; }
-    public string? GhiChu { get; set; }
-}
+public sealed class PaymentMethodConverter() : JsonStringEnumConverter<PaymentMethod>(allowIntegerValues: false);

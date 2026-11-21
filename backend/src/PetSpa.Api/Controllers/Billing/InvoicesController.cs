@@ -9,110 +9,60 @@ namespace PetSpa.Api.Controllers.Billing;
 [ApiController]
 [Route("api/internal")]
 [Authorize]
-public class InvoicesController(IInvoiceService invoiceService) : ControllerBase
+public class InvoicesController(IInvoiceService invoices) : ControllerBase
 {
-    /// <summary>
-    /// E23: Lập hóa đơn snapshot bất biến cho đơn đặt lịch
-    /// POST /api/internal/bookings/{id}/invoices
-    /// </summary>
     [HttpPost("bookings/{id:int}/invoices")]
     public async Task<ActionResult<ApiResponse<InvoiceResponseDto>>> CreateInvoice(
-        [FromRoute] int id,
-        CancellationToken cancellationToken)
+        int id, [FromBody] CreateInvoiceCommand request, CancellationToken cancellationToken)
     {
-        if (!TryGetActorId(out var actorStaffId))
-        {
-            return Unauthorized(ApiResponse<InvoiceResponseDto>.Fail(
-                "Phiên đăng nhập không hợp lệ.",
-                "UNAUTHENTICATED",
-                null,
-                HttpContext.TraceIdentifier));
-        }
+        if (!TryGetActorId(out var actor))
+            return Unauthenticated();
 
-        var result = await invoiceService.CreateInvoiceAsync(id, actorStaffId, cancellationToken);
-        if (!result.Success)
-        {
-            return MapErrorResponse(result);
-        }
-
-        return StatusCode(StatusCodes.Status201Created, WithTraceId(result));
+        var result = await invoices.CreateInvoiceAsync(id, request, actor, TraceId, cancellationToken);
+        return Respond(result.Response, result.IsReplay ? StatusCodes.Status200OK : StatusCodes.Status201Created);
     }
 
-    /// <summary>
-    /// E24: Xem chi tiết hóa đơn
-    /// GET /api/internal/invoices/{id}
-    /// </summary>
     [HttpGet("invoices/{id:int}")]
-    public async Task<ActionResult<ApiResponse<InvoiceResponseDto>>> GetInvoice(
-        [FromRoute] int id,
-        CancellationToken cancellationToken)
+    public async Task<ActionResult<ApiResponse<InvoiceResponseDto>>> GetInvoice(int id, CancellationToken cancellationToken)
     {
-        if (!TryGetActorId(out var actorStaffId))
-        {
-            return Unauthorized(ApiResponse<InvoiceResponseDto>.Fail(
-                "Phiên đăng nhập không hợp lệ.",
-                "UNAUTHENTICATED",
-                null,
-                HttpContext.TraceIdentifier));
-        }
+        if (!TryGetActorId(out var actor))
+            return Unauthenticated();
 
-        var result = await invoiceService.GetInvoiceByIdAsync(id, actorStaffId, cancellationToken);
-        if (!result.Success)
-        {
-            return MapErrorResponse(result);
-        }
-
-        return Ok(WithTraceId(result));
+        return Respond(await invoices.GetInvoiceByIdAsync(id, actor, cancellationToken));
     }
 
-    /// <summary>
-    /// E26: Xác nhận thu đủ 100% tiền và hoàn tất hóa đơn
-    /// POST /api/internal/invoices/{id}/checkout
-    /// </summary>
     [HttpPost("invoices/{id:int}/checkout")]
     public async Task<ActionResult<ApiResponse<InvoiceResponseDto>>> CheckoutInvoice(
-        [FromRoute] int id,
-        [FromBody] CheckoutRequestDto request,
-        CancellationToken cancellationToken)
+        int id, [FromBody] CheckoutRequestDto request, CancellationToken cancellationToken)
     {
-        if (!TryGetActorId(out var actorStaffId))
-        {
-            return Unauthorized(ApiResponse<InvoiceResponseDto>.Fail(
-                "Phiên đăng nhập không hợp lệ.",
-                "UNAUTHENTICATED",
-                null,
-                HttpContext.TraceIdentifier));
-        }
+        if (!TryGetActorId(out var actor))
+            return Unauthenticated();
 
-        var result = await invoiceService.CheckoutInvoiceAsync(id, request, actorStaffId, cancellationToken);
-        if (!result.Success)
-        {
-            return MapErrorResponse(result);
-        }
-
-        return Ok(WithTraceId(result));
+        return Respond(await invoices.CheckoutInvoiceAsync(id, request, actor, TraceId, cancellationToken));
     }
 
-    private bool TryGetActorId(out int actorId)
-    {
-        return int.TryParse(User.FindFirst("id")?.Value, out actorId) && actorId > 0;
-    }
+    private string TraceId => HttpContext.TraceIdentifier[..Math.Min(40, HttpContext.TraceIdentifier.Length)];
 
-    private ActionResult<ApiResponse<InvoiceResponseDto>> MapErrorResponse(ApiResponse<InvoiceResponseDto> result)
+    private bool TryGetActorId(out int actorId) =>
+        int.TryParse(User.FindFirst("id")?.Value, out actorId) && actorId > 0;
+
+    private ActionResult<ApiResponse<InvoiceResponseDto>> Unauthenticated() =>
+        Unauthorized(ApiResponse<InvoiceResponseDto>.Fail("Phiên đăng nhập không hợp lệ.", "UNAUTHENTICATED", [], TraceId));
+
+    private ActionResult<ApiResponse<InvoiceResponseDto>> Respond(
+        ApiResponse<InvoiceResponseDto> response, int successStatusCode = StatusCodes.Status200OK)
     {
-        var withTrace = WithTraceId(result);
-        return result.ErrorCode switch
+        if (response.Success)
+            return StatusCode(successStatusCode, response);
+
+        response.TraceId = TraceId;
+        return response.ErrorCode switch
         {
-            "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, withTrace),
-            "BOOKING_NOT_FOUND" or "INVOICE_NOT_FOUND" => NotFound(withTrace),
-            "INVOICE_ALREADY_EXISTS" or "INVALID_TRANSITION" or "AMOUNT_MISMATCH" or "IDEMPOTENCY_CONFLICT" => Conflict(withTrace),
-            _ => BadRequest(withTrace)
+            "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, response),
+            "NOT_FOUND" => NotFound(response),
+            "INVALID_TRANSITION" or "AMOUNT_MISMATCH" or "IDEMPOTENCY_CONFLICT" => Conflict(response),
+            "TEMPORARY_FAILURE" => StatusCode(StatusCodes.Status503ServiceUnavailable, response),
+            _ => BadRequest(response)
         };
-    }
-
-    private ApiResponse<InvoiceResponseDto> WithTraceId(ApiResponse<InvoiceResponseDto> response)
-    {
-        response.TraceId = HttpContext.TraceIdentifier;
-        return response;
     }
 }
