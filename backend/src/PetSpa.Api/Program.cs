@@ -80,6 +80,7 @@ builder.Services.AddOpenApi();
 builder.Services.AddDbContext<PetSpaDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
+builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<ICatalogService, CatalogService>();
 
 // CORS configuration for local frontend development
