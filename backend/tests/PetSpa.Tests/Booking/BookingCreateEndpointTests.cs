@@ -88,6 +88,72 @@ public sealed class BookingCreateEndpointTests
         Assert.DoesNotContain("test-1.jpg", first.ToJsonString());
     }
 
+    [Fact]
+    public async Task ReusingCommittedKeyWithoutItsReferencedAttachmentConflicts()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var payload = Payload(Guid.NewGuid());
+        Pet(payload)["vaccinationFileKey"] = "vaccine";
+        await ReadDataAsync(await SendAsync(fixture.Client, payload, Jpeg), HttpStatusCode.Created);
+
+        await AssertErrorAsync(await SendAsync(fixture.Client, payload), HttpStatusCode.Conflict, "IDEMPOTENCY_CONFLICT");
+
+        payload["requestId"] = Guid.NewGuid().ToString();
+        await AssertErrorAsync(await SendAsync(fixture.Client, payload), HttpStatusCode.BadRequest, "VALIDATION_FAILED");
+        Assert.Equal(1, fixture.Storage.UploadCount);
+    }
+
+    [Fact]
+    public async Task DuplicateUploadThatFailsAfterOriginalCommitReturnsTheCommittedBooking()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var firstUploadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var secondUploadStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var finishFirstUpload = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var failSecondUpload = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        fixture.Storage.BeforeUpload = async (attempt, cancellationToken) =>
+        {
+            if (attempt == 1)
+            {
+                firstUploadStarted.SetResult();
+                await finishFirstUpload.Task.WaitAsync(cancellationToken);
+                return;
+            }
+
+            secondUploadStarted.SetResult();
+            await failSecondUpload.Task.WaitAsync(cancellationToken);
+            throw new FileStorageException("Test storage outage", "STORAGE_UNAVAILABLE");
+        };
+
+        var payload = Payload(Guid.NewGuid());
+        Pet(payload)["vaccinationFileKey"] = "vaccine";
+        var first = SendAsync(fixture.Client, payload, Jpeg);
+        try
+        {
+            await firstUploadStarted.Task.WaitAsync(timeout.Token);
+            var duplicate = SendAsync(fixture.Client, payload, Jpeg);
+            await secondUploadStarted.Task.WaitAsync(timeout.Token);
+            finishFirstUpload.SetResult();
+            var created = await ReadDataAsync(await first.WaitAsync(timeout.Token), HttpStatusCode.Created);
+            failSecondUpload.SetResult();
+
+            var replay = await ReadDataAsync(await duplicate.WaitAsync(timeout.Token), HttpStatusCode.OK);
+
+            Assert.True(JsonNode.DeepEquals(created, replay));
+            Assert.Equal(1, fixture.Email.Attempts);
+            Assert.Empty(fixture.Storage.Deleted);
+            await using var db = fixture.Database.CreateContext();
+            Assert.Equal(1, await db.DonDatLichSet.CountAsync());
+            Assert.Equal(1, (await db.KhungGioDatLichSet.SingleAsync()).SlotDaDat);
+        }
+        finally
+        {
+            finishFirstUpload.TrySetResult();
+            failSecondUpload.TrySetResult();
+        }
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -504,10 +570,16 @@ public sealed class BookingCreateEndpointTests
     {
         private int _uploadCount;
         public int UploadCount => _uploadCount;
+        public Func<int, CancellationToken, Task>? BeforeUpload { get; set; }
         public System.Collections.Concurrent.ConcurrentBag<string> Deleted { get; } = [];
 
-        public Task<string> UploadPhotoAsync(byte[] content, CancellationToken cancellationToken = default) =>
-            Task.FromResult($"test-{Interlocked.Increment(ref _uploadCount)}.jpg");
+        public async Task<string> UploadPhotoAsync(byte[] content, CancellationToken cancellationToken = default)
+        {
+            var attempt = Interlocked.Increment(ref _uploadCount);
+            if (BeforeUpload is not null)
+                await BeforeUpload(attempt, cancellationToken);
+            return $"test-{attempt}.jpg";
+        }
 
         public Task DeleteAsync(string objectPath, CancellationToken cancellationToken = default)
         {

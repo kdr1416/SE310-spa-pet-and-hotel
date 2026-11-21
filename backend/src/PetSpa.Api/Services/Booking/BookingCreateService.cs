@@ -37,13 +37,8 @@ public sealed class BookingCreateService(
         if (!IsValid(request))
             return Invalid();
 
-        var keys = request.ThuCung.Where(pet => pet.VaccinationFileKey is not null)
-            .Select(pet => pet.VaccinationFileKey!).ToHashSet(StringComparer.Ordinal);
         if (files.Count > 10 || files.Any(file => file.Length > MaximumPhotoBytes))
             return Failure("FILE_TOO_LARGE", "Chỉ tải tối đa 10 ảnh, mỗi ảnh không quá 5 MiB.");
-        if (files.Count != keys.Count || !keys.SetEquals(files.Select(file => file.Name))
-            || request.ThuCung.Count(pet => pet.VaccinationFileKey is not null) != keys.Count)
-            return Invalid("Mỗi ảnh đính kèm phải khớp đúng một vaccinationFileKey.");
 
         var uploaded = new Dictionary<string, string>(StringComparer.Ordinal);
         var preserveUploads = false;
@@ -55,19 +50,31 @@ public sealed class BookingCreateService(
             if (replay is not null)
                 return replay;
 
+            var references = request.ThuCung.Select(pet => pet.VaccinationFileKey).OfType<string>().ToArray();
+            if (fingerprint is null || references.Length != files.Count
+                || !references.ToHashSet(StringComparer.Ordinal).SetEquals(files.Select(file => file.Name)))
+                return Invalid("Mỗi ảnh đính kèm phải khớp đúng một vaccinationFileKey.");
+
             if (await proofs.ResolveAsync(request, lockChallenges: false, cancellationToken) is null)
             {
                 // A concurrent writer can consume the proof after our first replay lookup.
-                await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-                await LockRequestKeyAsync(request.RequestId, cancellationToken);
-                return await FindReplayAsync(request.RequestId, fingerprint, cancellationToken) ?? InvalidProof();
+                return await FindReplayWithKeyLockAsync(request.RequestId, fingerprint, cancellationToken) ?? InvalidProof();
             }
 
-            foreach (var file in files)
+            try
             {
-                using var buffer = new MemoryStream(checked((int)file.Length));
-                await file.CopyToAsync(buffer, cancellationToken);
-                uploaded.Add(file.Name, await storage.UploadPhotoAsync(buffer.ToArray(), cancellationToken));
+                foreach (var file in files)
+                {
+                    using var buffer = new MemoryStream(checked((int)file.Length));
+                    await file.CopyToAsync(buffer, cancellationToken);
+                    uploaded.Add(file.Name, await storage.UploadPhotoAsync(buffer.ToArray(), cancellationToken));
+                }
+            }
+            catch (FileStorageException exception)
+            {
+                // A duplicate upload can fail while the original request commits.
+                return await FindReplayWithKeyLockAsync(request.RequestId, fingerprint, cancellationToken)
+                    ?? Failure(exception.ErrorCode, exception.Message);
             }
 
             BookingResponse response;
@@ -160,13 +167,9 @@ public sealed class BookingCreateService(
 
             return new BookingCreateResult(response with { EmailDelivery = await DeliverEmailAsync(response) });
         }
-        catch (FileStorageException exception)
-        {
-            return Failure(exception.ErrorCode, exception.Message);
-        }
         catch (DbUpdateException exception) when (IsUniqueViolation(exception, RequestIndex))
         {
-            return await FindReplayAsync(request.RequestId, fingerprint!, cancellationToken) ?? TemporaryFailure();
+            return await FindReplayAsync(request.RequestId, fingerprint, cancellationToken) ?? TemporaryFailure();
         }
         catch (Exception exception) when (exception is DbUpdateException or NpgsqlException)
         {
@@ -183,7 +186,15 @@ public sealed class BookingCreateService(
         }
     }
 
-    private async Task<BookingCreateResult?> FindReplayAsync(Guid requestId, string fingerprint, CancellationToken cancellationToken)
+    private async Task<BookingCreateResult?> FindReplayWithKeyLockAsync(
+        Guid requestId, string fingerprint, CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await LockRequestKeyAsync(requestId, cancellationToken);
+        return await FindReplayAsync(requestId, fingerprint, cancellationToken);
+    }
+
+    private async Task<BookingCreateResult?> FindReplayAsync(Guid requestId, string? fingerprint, CancellationToken cancellationToken)
     {
         var booking = await db.DonDatLichSet.AsNoTracking().SingleOrDefaultAsync(row => row.RequestId == requestId, cancellationToken);
         if (booking is null)
@@ -379,12 +390,15 @@ public sealed class BookingCreateService(
         }
     }
 
-    private static async Task<string> FingerprintAsync(
+    private static async Task<string?> FingerprintAsync(
         BookingCreate request, IFormFileCollection files, CancellationToken cancellationToken)
     {
         var fileHashes = new SortedDictionary<string, string>(StringComparer.Ordinal);
         foreach (var file in files)
         {
+            if (fileHashes.ContainsKey(file.Name))
+                return null; // An ambiguous file name cannot match any committed request.
+
             await using var stream = file.OpenReadStream();
             fileHashes.Add(file.Name, Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)));
         }
