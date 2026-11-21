@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Data.Common;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -6,6 +7,7 @@ using System.Text.Json.Nodes;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using PetSpa.Api.Data;
 using PetSpa.Api.Services.Booking;
@@ -206,6 +208,46 @@ public sealed class BookingManagementEndpointTests
         Assert.Single(await db.AuditLogSet.Where(audit => audit.DoiTuongId == 1).ToListAsync());
     }
 
+    [Fact]
+    public async Task Cancel_ConcurrentBookingsReleaseBothReservationsFromTheirSharedIntakeSlot()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using (var db = fixture.Database.CreateContext())
+        {
+            await db.DonDatLichSet.Where(booking => booking.Id == 1 || booking.Id == 2)
+                .ExecuteUpdateAsync(bookings => bookings.SetProperty(booking => booking.KhungGioId, 2));
+            db.Add(new ChiTietDon
+            {
+                Id = 4, DonDatLichId = 2, ThuCungId = 1, TenPetSnapshot = "Pet 4", CanNangKhaiBao = 5
+            });
+            db.Add(new DichVuTrongDon
+            {
+                ChiTietDonId = 4, KhungGioId = 2, ThoiLuongSnapshot = 25, RequestId = Guid.NewGuid(),
+                TenSnapshot = "Spa", DichVuId = 1
+            });
+            await db.SaveChangesAsync();
+        }
+
+        fixture.SlotLock.Arm();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var first = fixture.Staff.PostAsJsonAsync($"{Bookings}/1/cancel", Cancel("STAFF_REJECTED"), timeout.Token);
+        try
+        {
+            await fixture.SlotLock.BeforeLock.Task.WaitAsync(timeout.Token);
+            await DataAsync(await fixture.Staff.PostAsJsonAsync($"{Bookings}/2/cancel", Cancel("STAFF_REJECTED"), timeout.Token));
+        }
+        finally
+        {
+            fixture.SlotLock.Resume.TrySetResult();
+        }
+        await DataAsync(await first);
+
+        await using var verification = fixture.Database.CreateContext();
+        var sharedSlot = await verification.KhungGioDatLichSet.SingleAsync(slot => slot.Id == 2);
+        Assert.Equal(1, sharedSlot.SlotDaDat);
+        Assert.Equal(25, sharedSlot.PhutDaGiu);
+    }
+
     [Theory]
     [InlineData("STAFF_CANCELLED", 119, false, false, HttpStatusCode.Forbidden, "FORBIDDEN")]
     [InlineData("STAFF_CANCELLED", 120, false, false, HttpStatusCode.OK, null)]
@@ -253,6 +295,40 @@ public sealed class BookingManagementEndpointTests
                 HttpStatusCode.BadRequest, "VALIDATION_FAILED");
     }
 
+    [Theory]
+    [InlineData("Khách đã gọi điện cho quầy", false)]
+    [InlineData("Khách không liên hệ được", false)]
+    [InlineData("Khách không liên hệ:", false)]
+    [InlineData("Khách không liên hệ", true)]
+    [InlineData("KHÁCH KHÔNG LIÊN HỆ: Quầy đã kiểm tra nhật ký cuộc gọi", true)]
+    public async Task Cancel_NoShowRequiresExplicitNonContactAttestation(string reason, bool accepted)
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using var db = fixture.Database.CreateContext();
+        await db.DonDatLichSet.Where(booking => booking.Id == 1).ExecuteUpdateAsync(bookings => bookings
+            .SetProperty(booking => booking.BatDauDuKien, Now.AddHours(-4))
+            .SetProperty(booking => booking.MocCuoiCa, Now.AddMinutes(-30)));
+        var requestId = Guid.NewGuid();
+        var response = await fixture.Staff.PostAsJsonAsync($"{Bookings}/1/cancel",
+            new { requestId, loaiHuy = "NO_SHOW", lyDo = reason });
+
+        if (accepted)
+        {
+            Assert.Equal("CANCELLED", (string?)(await DataAsync(response))["trangThai"]);
+            Assert.Equal(reason, (await db.AuditLogSet.SingleAsync(audit => audit.RequestId == requestId)).LyDo);
+        }
+        else
+        {
+            await ErrorAsync(response, HttpStatusCode.Conflict, "INVALID_TRANSITION");
+            Assert.Equal(BookingState.PENDING, (await db.DonDatLichSet.SingleAsync(booking => booking.Id == 1)).TrangThai);
+            Assert.False(await db.AuditLogSet.AnyAsync(audit => audit.RequestId == requestId));
+        }
+
+        var slots = await db.KhungGioDatLichSet.OrderBy(slot => slot.Id).ToListAsync();
+        var expected = accepted ? new[] { (1, 15), (2, 50), (1, 30) } : [(1, 15), (4, 140), (2, 50)];
+        Assert.Equal(expected, slots.Select(slot => (slot.SlotDaDat, slot.PhutDaGiu)));
+    }
+
     [Fact]
     public async Task Tracking_RequiresExactPairBeforeSigningOnlyItsOwnCarePhotos()
     {
@@ -295,6 +371,48 @@ public sealed class BookingManagementEndpointTests
     }
 
     [Fact]
+    public async Task Tracking_KeepsLegacyPhotoLogsWithoutCallingThePrivateSignerForThem()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        const string privatePath = "8c0472c3473c420b92208d9692644e8a.jpg";
+        await using (var db = fixture.Database.CreateContext())
+        {
+            db.AddRange(Log(1, "CHECK_IN", "check-in/legacy.jpg", "Ghi chú nội bộ"),
+                Log(1, "CARE_LOG", "care-logs/legacy.jpg", "Đã chăm sóc"),
+                Log(1, "CARE_READY", privatePath, "Hoàn thành"));
+            await db.SaveChangesAsync();
+        }
+
+        var data = await DataAsync(await LookupAsync(fixture.Public, Phone, TrackingCode));
+        var logs = data["thuCung"]![0]!["nhatKy"]!.AsArray();
+        Assert.Equal(3, logs.Count);
+        foreach (var type in new[] { "CHECK_IN", "CARE_LOG" })
+        {
+            var legacyLog = Assert.IsType<JsonObject>(logs.Single(log => (string?)log!["loaiNhatKy"] == type));
+            Assert.True(legacyLog.ContainsKey("anhUrl"));
+            Assert.Null(legacyLog["anhUrl"]);
+        }
+        var privateLog = logs.Single(log => (string?)log!["loaiNhatKy"] == "CARE_READY");
+        Assert.StartsWith("https://photos.example/", (string?)privateLog!["anhUrl"]);
+        Assert.Equal(privatePath, Assert.Single(fixture.Storage.Requests));
+    }
+
+    [Fact]
+    public async Task Tracking_ReturnsStorageUnavailableWhenAPrivatePhotoCannotBeSigned()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        await using (var db = fixture.Database.CreateContext())
+        {
+            db.Add(Log(1, "CARE_LOG", "8c0472c3473c420b92208d9692644e8a.jpg", "Đã chăm sóc"));
+            await db.SaveChangesAsync();
+        }
+        fixture.Storage.Fail = true;
+
+        await ErrorAsync(await LookupAsync(fixture.Public, Phone, TrackingCode),
+            HttpStatusCode.ServiceUnavailable, "STORAGE_UNAVAILABLE");
+    }
+
+    [Fact]
     public async Task Tracking_ConcurrentFailuresLockPairAtFifthAttemptAndResetAtExpiry()
     {
         await using var fixture = await Fixture.CreateAsync();
@@ -324,7 +442,10 @@ public sealed class BookingManagementEndpointTests
     }
 
     private static object Command() => new { requestId = Guid.NewGuid() };
-    private static object Cancel(string type) => new { requestId = Guid.NewGuid(), loaiHuy = type, lyDo = "Có lý do" };
+    private static object Cancel(string type) => new
+    {
+        requestId = Guid.NewGuid(), loaiHuy = type, lyDo = type == "NO_SHOW" ? "Khách không liên hệ" : "Có lý do"
+    };
     private static Task<HttpResponseMessage> LookupAsync(HttpClient client, string phone, string code) =>
         client.PostAsJsonAsync(Tracking, new { soDienThoai = phone, trackingCode = code });
     private static int[] BookingIds(JsonNode data) => data["items"]!.AsArray().Select(row => (int)row!["maDon"]!).ToArray();
@@ -362,6 +483,7 @@ public sealed class BookingManagementEndpointTests
         public TestClock Clock { get; } = new();
         public TestStorage Storage { get; } = new();
         public TestEmail Email { get; }
+        public SlotLockGate SlotLock { get; } = new();
         public HttpClient Staff { get; }
         public HttpClient Admin { get; }
         public HttpClient Unprivileged { get; }
@@ -380,6 +502,7 @@ public sealed class BookingManagementEndpointTests
                     services.AddSingleton<TimeProvider>(Clock);
                     services.AddSingleton<IFileStorageService>(Storage);
                     services.AddSingleton<IEmailSender>(Email);
+                    services.AddDbContext<PetSpaDbContext>((_, options) => options.AddInterceptors(SlotLock));
                 });
             });
             Staff = CreateClient(Employee(1));
@@ -490,15 +613,42 @@ public sealed class BookingManagementEndpointTests
     private sealed class TestStorage : IFileStorageService
     {
         public ConcurrentQueue<string> Requests { get; } = new();
+        public bool Fail { get; set; }
         public Task<Uri> CreateReadUrlAsync(string objectPath, CancellationToken cancellationToken = default)
         {
             Requests.Enqueue(objectPath);
+            if (Fail)
+                throw new FileStorageException("Không thể truy cập kho lưu trữ ảnh.", "STORAGE_UNAVAILABLE");
             return Task.FromResult(new Uri($"https://photos.example/{Guid.NewGuid():N}"));
         }
         public Task<string> UploadPhotoAsync(byte[] content, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
         public Task DeleteAsync(string objectPath, CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
+    }
+
+    // Pause one request after its graph read, then let an independent booking release the shared slot.
+    private sealed class SlotLockGate : DbCommandInterceptor
+    {
+        private int _armed;
+        public TaskCompletionSource BeforeLock { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource Resume { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Arm() => Interlocked.Exchange(ref _armed, 1);
+
+        public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
+            DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("FROM khung_gio_dat_lich", StringComparison.Ordinal) &&
+                command.CommandText.Contains("FOR UPDATE", StringComparison.Ordinal) &&
+                Interlocked.Exchange(ref _armed, 0) == 1)
+            {
+                BeforeLock.TrySetResult();
+                await Resume.Task.WaitAsync(cancellationToken);
+            }
+            return result;
+        }
     }
 
     private sealed class TestEmail(PostgresTestDatabase database) : IEmailSender
