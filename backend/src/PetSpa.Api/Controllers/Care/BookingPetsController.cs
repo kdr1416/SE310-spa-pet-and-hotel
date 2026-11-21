@@ -11,7 +11,10 @@ namespace PetSpa.Api.Controllers.Care;
 [ApiController]
 [Route("api/internal/booking-pets")]
 [Authorize]
-public class BookingPetsController(ICheckinService checkinService, ICareService careService) : ControllerBase
+public class BookingPetsController(
+    ICheckinService checkinService,
+    ICareService careService,
+    IHandoverService handoverService) : ControllerBase
 {
     private static readonly JsonSerializerOptions PayloadJsonOptions = new(JsonSerializerDefaults.Web)
     {
@@ -271,5 +274,41 @@ public class BookingPetsController(ICheckinService checkinService, ICareService 
         }
 
         return StatusCode(result.StatusCode, ApiResponse<CareLog>.Ok(result.Data!, result.Message));
+    }
+
+    [HttpPost("{id:int}/handover")]
+    public async Task<ActionResult<ApiResponse<BookingPet>>> Handover(
+        [FromRoute] int id,
+        [FromBody] Handover request,
+        CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirst("id")?.Value, out var actorId) || actorId <= 0)
+        {
+            return Unauthorized(ApiResponse<BookingPet>.Fail(
+                "Phiên đăng nhập không hợp lệ.",
+                "UNAUTHENTICATED",
+                null,
+                HttpContext.TraceIdentifier));
+        }
+
+        var result = await handoverService.HandoverAsync(
+            id,
+            actorId,
+            request,
+            HttpContext.TraceIdentifier,
+            cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            var errorBody = ApiResponse<BookingPet>.Fail(
+                result.Message,
+                result.ErrorCode ?? "VALIDATION_FAILED",
+                result.Errors,
+                HttpContext.TraceIdentifier);
+
+            return StatusCode(result.StatusCode, errorBody);
+        }
+
+        return Ok(ApiResponse<BookingPet>.Ok(result.Data!, result.Message));
     }
 }
