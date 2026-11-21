@@ -1,29 +1,21 @@
-using System.Security.Cryptography;
-using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
 using PetSpa.Core.Common;
 using PetSpa.Core.DTOs.Care;
+using PetSpa.Core.Entities.Billing;
 using PetSpa.Core.Entities.Booking;
 using PetSpa.Core.Entities.Care;
 using PetSpa.Core.Entities.Identity;
+using PetSpa.Core.Entities.Scheduling;
 using PetSpa.Core.Enums;
 using PetSpa.Core.Interfaces.Care;
 
 namespace PetSpa.Api.Services.Care;
 
-public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment environment) : ICheckinService
+public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) : ICheckinService
 {
-    private const long MaxPhotoBytes = 5 * 1024 * 1024;
-    private const string RequiredPermission = "CHECKIN_PERFORM";
-    private const string AuditAction = "CHECKIN_PERFORM";
-    private const string AuditTargetType = "ChiTietDon";
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private const string Permission = "CHECKIN_PERFORM";
 
     public async Task<CheckinResult> CheckinAsync(
         int chiTietDonId,
@@ -33,165 +25,87 @@ public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment envir
         string traceId,
         CancellationToken cancellationToken = default)
     {
-        var actor = await dbContext.NhanVienSet
-            .Include(nv => nv.NhanVienQuyenNhanVienItems)
-            .FirstOrDefaultAsync(nv => nv.Id == actorId, cancellationToken);
+        var errors = ValidateRequest(chiTietDonId, request, photo);
+        if (errors.Count > 0)
+            return new CheckinResult(400, Message: "Dữ liệu check-in không hợp lệ.", ErrorCode: "VALIDATION_FAILED", Errors: errors);
 
-        if (actor is null || !actor.IsActive ||
-            !actor.NhanVienQuyenNhanVienItems.Any(q => q.MaQuyen == RequiredPermission))
+        if (CareOperation.ValidatePhoto<BookingPet>(photo.Content, "anhTiepNhan") is { } invalidPhoto)
+            return ToCheckinResult(invalidPhoto);
+
+        var normalizedFurConditions = request.TinhTrangLong.Select(code => code.Trim()).Distinct(StringComparer.Ordinal).ToList();
+        var payload = new
         {
-            return new CheckinResult(
-                StatusCodes.Status403Forbidden,
-                Message: "Bạn không có quyền thực hiện check-in thú cưng.",
-                ErrorCode: "FORBIDDEN");
-        }
+            chiTietDonId,
+            request.RequestId,
+            request.CanNangThucTe,
+            TinhTrangLong = normalizedFurConditions,
+            request.MaNhanVien,
+            GhiChuSucKhoe = request.GhiChuSucKhoe.Trim(),
+            request.QuyetDinhGia,
+            request.XacNhanKhach,
+            NoiDungThuGon = request.NoiDungThuGon?.Trim(),
+            request.MaHoSoTiemChung,
+            request.XacNhanGiayHopLe
+        };
 
-        var validationErrors = ValidateRequest(chiTietDonId, request, photo);
-        if (validationErrors.Count > 0)
+        var fingerprint = CareOperation.Fingerprint(new { payload, PhotoHash = CareOperation.PhotoFingerprint(photo.Content) });
+        var legacyFingerprint = CareOperation.Fingerprint(new
         {
-            return new CheckinResult(
-                StatusCodes.Status400BadRequest,
-                Message: "Dữ liệu check-in không hợp lệ.",
-                ErrorCode: "VALIDATION_FAILED",
-                Errors: validationErrors);
-        }
+            payload.chiTietDonId,
+            payload.RequestId,
+            payload.CanNangThucTe,
+            payload.TinhTrangLong,
+            payload.MaNhanVien,
+            payload.GhiChuSucKhoe,
+            payload.QuyetDinhGia,
+            payload.XacNhanKhach,
+            payload.NoiDungThuGon,
+            payload.MaHoSoTiemChung,
+            payload.XacNhanGiayHopLe,
+            photo.FileName,
+            photo.Length
+        });
+        var command = new CareCommand(chiTietDonId, actorId, request.RequestId, Permission, Permission, traceId, fingerprint, legacyFingerprint);
+        return ToCheckinResult(await operation.ExecuteAsync<BookingPet>(command, "Check-in thú cưng thành công.", photo.Content,
+            (actor, now, path, preflight, ct) =>
+                CheckInPetAsync(chiTietDonId, actor, request, normalizedFurConditions, now, path, preflight, ct),
+            cancellationToken));
+    }
 
-        if (photo.Length > MaxPhotoBytes)
-        {
-            return new CheckinResult(
-                StatusCodes.Status413PayloadTooLarge,
-                Message: "Ảnh tiếp nhận vượt quá dung lượng tối đa 5 MiB.",
-                ErrorCode: "FILE_TOO_LARGE",
-                Errors: [new ApiErrorItem { Field = "anhTiepNhan", Message = "Kích thước ảnh tối đa 5 MiB." }]);
-        }
+    private async Task<CareResult<BookingPet>> CheckInPetAsync(
+        int petId, NhanVien actor, Checkin request, List<string> furConditions,
+        DateTimeOffset now, string? objectPath, bool preflight, CancellationToken cancellationToken)
+    {
+        if (await ValidateFurConditionsAsync(furConditions, cancellationToken) is { } invalidFur)
+            return invalidFur;
 
-        var photoExtension = DetectImageExtension(photo.Content);
-        if (photoExtension is null)
-        {
-            return new CheckinResult(
-                StatusCodes.Status415UnsupportedMediaType,
-                Message: "Định dạng ảnh tiếp nhận không được hỗ trợ (chỉ chấp nhận JPEG, PNG, WebP).",
-                ErrorCode: "UNSUPPORTED_FILE",
-                Errors: [new ApiErrorItem { Field = "anhTiepNhan", Message = "Chỉ chấp nhận JPEG, PNG hoặc WebP." }]);
-        }
+        var pet = await CareProjection.IncludeDetails(dbContext.ChiTietDonSet)
+            .Include(pet => pet.ThuCung)
+            .Include(pet => pet.DonDatLich).ThenInclude(booking => booking.HoaDonDonDatLichItems)
+            .Include(pet => pet.DichVuTrongDonChiTietDonItems).ThenInclude(line => line.DichVu)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(pet => pet.Id == petId, cancellationToken);
+        if (pet is null)
+            return CareResult<BookingPet>.NotFound();
 
-        var normalizedFurConditions = request.TinhTrangLong
-            .Select(c => c.Trim())
-            .Where(c => !string.IsNullOrEmpty(c))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
+        var booking = pet.DonDatLich;
+        if (booking.TrangThai is not (BookingState.CONFIRMED or BookingState.IN_PROGRESS) ||
+            (booking.TrangThai == BookingState.IN_PROGRESS && !await dbContext.ChiTietDonSet.AnyAsync(other =>
+                other.DonDatLichId == booking.Id && other.Id != pet.Id && other.CheckInAt != null, cancellationToken)))
+            return CareResult<BookingPet>.InvalidTransition("Chỉ có thể check-in khi đơn đã xác nhận hoặc đã tiếp nhận thú cưng khác.");
+        if (pet.TrangThaiChamSoc != PetCareState.NOT_ARRIVED)
+            return CareResult<BookingPet>.InvalidTransition("Thú cưng không ở trạng thái NOT_ARRIVED để thực hiện check-in.");
+        if (booking.HoaDonDonDatLichItems.Any(invoice => invoice.TrangThai != InvoiceState.REVOKED))
+            return CareResult<BookingPet>.InvalidTransition("Đơn đặt lịch đã có hóa đơn hiệu lực, không thể check-in.");
 
-        var furConfigResult = await ValidateFurConditionsAsync(normalizedFurConditions, cancellationToken);
-        if (furConfigResult is not null)
-        {
-            return furConfigResult;
-        }
+        var (vaccinationRequired, frozenSize) = ReadBookingPolicy(pet);
+        if (request.MaHoSoTiemChung is { } vaccinationId && !await dbContext.HoSoTiemChungSet
+                .AnyAsync(record => record.Id == vaccinationId && record.ThuCungId == pet.ThuCungId, cancellationToken))
+            return new CareResult<BookingPet>(404, Message: "Không tìm thấy hồ sơ tiêm chủng của thú cưng.", ErrorCode: "NOT_FOUND");
 
-        var fingerprint = ComputeFingerprint(chiTietDonId, request, normalizedFurConditions, photo);
-
-        var existingAudit = await dbContext.AuditLogSet
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a =>
-                a.ActorId == actorId &&
-                a.HanhDong == AuditAction &&
-                a.LoaiDoiTuong == AuditTargetType &&
-                a.DoiTuongId == chiTietDonId &&
-                a.RequestId == request.RequestId,
-                cancellationToken);
-
-        if (existingAudit is not null)
-        {
-            if (!string.Equals(existingAudit.Fingerprint, fingerprint, StringComparison.Ordinal))
-            {
-                return new CheckinResult(
-                    StatusCodes.Status409Conflict,
-                    Message: "RequestId đã được sử dụng với dữ liệu khác.",
-                    ErrorCode: "IDEMPOTENCY_CONFLICT");
-            }
-
-            if (!string.IsNullOrWhiteSpace(existingAudit.KetQua))
-            {
-                var cached = JsonSerializer.Deserialize<BookingPet>(existingAudit.KetQua, JsonOptions);
-                if (cached is not null)
-                {
-                    return new CheckinResult(StatusCodes.Status200OK, Data: cached, Message: "Check-in thú cưng thành công.");
-                }
-            }
-        }
-
-        var chiTietDon = await dbContext.ChiTietDonSet
-            .Include(c => c.DonDatLich)
-                .ThenInclude(d => d.KhungGio)
-            .Include(c => c.DonDatLich)
-                .ThenInclude(d => d.HoaDonDonDatLichItems)
-            .Include(c => c.ThuCung)
-            .Include(c => c.DichVuTrongDonChiTietDonItems)
-                .ThenInclude(dv => dv.DichVu)
-            .Include(c => c.DichVuTrongDonChiTietDonItems)
-                .ThenInclude(dv => dv.KhungGio)
-            .Include(c => c.DichVuTrongDonChiTietDonItems)
-                .ThenInclude(dv => dv.ThanhPhanDichVuTrongDonDichVuTrongDonItems)
-                    .ThenInclude(tp => tp.DichVu)
-            .Include(c => c.NhatKyChamSocChiTietDonItems)
-                .ThenInclude(nk => nk.NhanVien)
-            .FirstOrDefaultAsync(c => c.Id == chiTietDonId, cancellationToken);
-
-        if (chiTietDon is null)
-        {
-            return new CheckinResult(
-                StatusCodes.Status404NotFound,
-                Message: "Không tìm thấy thú cưng trong đơn đặt lịch.",
-                ErrorCode: "NOT_FOUND");
-        }
-
-        var booking = chiTietDon.DonDatLich;
-        if (booking.TrangThai is not (BookingState.CONFIRMED or BookingState.IN_PROGRESS))
-        {
-            return new CheckinResult(
-                StatusCodes.Status409Conflict,
-                Message: "Chỉ có thể check-in khi đơn đặt lịch đang ở trạng thái CONFIRMED hoặc IN_PROGRESS.",
-                ErrorCode: "INVALID_TRANSITION");
-        }
-
-        if (chiTietDon.TrangThaiChamSoc != PetCareState.NOT_ARRIVED)
-        {
-            return new CheckinResult(
-                StatusCodes.Status409Conflict,
-                Message: "Thú cưng không ở trạng thái NOT_ARRIVED để thực hiện check-in.",
-                ErrorCode: "INVALID_TRANSITION");
-        }
-
-        if (booking.HoaDonDonDatLichItems.Any(h => h.TrangThai != InvoiceState.REVOKED))
-        {
-            return new CheckinResult(
-                StatusCodes.Status409Conflict,
-                Message: "Đơn đặt lịch đã có hóa đơn hiệu lực, không thể check-in.",
-                ErrorCode: "INVALID_TRANSITION");
-        }
-
-        if (request.MaHoSoTiemChung.HasValue)
-        {
-            var vaccinationExists = await dbContext.HoSoTiemChungSet
-                .AnyAsync(h => h.Id == request.MaHoSoTiemChung.Value && h.ThuCungId == chiTietDon.ThuCungId, cancellationToken);
-
-            if (!vaccinationExists)
-            {
-                return new CheckinResult(
-                    StatusCodes.Status404NotFound,
-                    Message: "Không tìm thấy hồ sơ tiêm chủng của thú cưng.",
-                    ErrorCode: "NOT_FOUND");
-            }
-        }
-
-        if (IsVaccinationRequired(chiTietDon) &&
-            !request.MaHoSoTiemChung.HasValue &&
-            request.XacNhanGiayHopLe != true)
-        {
-            return new CheckinResult(
-                StatusCodes.Status400BadRequest,
-                Message: "Dịch vụ yêu cầu xác nhận hồ sơ hoặc giấy tiêm chủng hợp lệ.",
-                ErrorCode: "VALIDATION_FAILED",
-                Errors:
+        if (vaccinationRequired && !request.MaHoSoTiemChung.HasValue && request.XacNhanGiayHopLe != true)
+            return new CareResult<BookingPet>(400, Message: "Dịch vụ yêu cầu xác nhận hồ sơ hoặc giấy tiêm chủng hợp lệ.",
+                ErrorCode: "VALIDATION_FAILED", Errors:
                 [
                     new ApiErrorItem
                     {
@@ -199,179 +113,107 @@ public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment envir
                         Message = "Cần cung cấp maHoSoTiemChung hoặc xacNhanGiayHopLe = true."
                     }
                 ]);
-        }
 
-        var assignee = await dbContext.NhanVienSet
-            .FirstOrDefaultAsync(nv => nv.Id == request.MaNhanVien, cancellationToken);
+        var assignee = await operation.FindEmployeeWithGrantAsync(request.MaNhanVien, "CARE_UPDATE", cancellationToken);
+        if (assignee is null)
+            return AssignmentUnavailable("Nhân viên được phân công phải hoạt động và có quyền CARE_UPDATE.");
 
-        if (assignee is null || !assignee.IsActive)
-        {
-            return new CheckinResult(
-                StatusCodes.Status409Conflict,
-                Message: "Nhân viên được phân công không tồn tại hoặc không hoạt động.",
-                ErrorCode: "ASSIGNMENT_UNAVAILABLE");
-        }
+        var hasCurrentShift = await operation.HasCurrentShiftAsync(assignee.Id, now, cancellationToken);
+        if (!hasCurrentShift && actor.VaiTro != Role.ADMIN)
+            return AssignmentUnavailable("Nhân viên được phân công không có ca làm việc được duyệt tại thời điểm check-in.");
 
-        var requiredShifts = chiTietDon.DichVuTrongDonChiTietDonItems
-            .Where(d => d.TrangThai != OrderServiceState.HUY)
-            .Select(d => (d.KhungGio.Ngay, d.KhungGio.CaLamViecId))
-            .Distinct()
-            .ToList();
-
-        if (requiredShifts.Count == 0)
-        {
-            requiredShifts.Add((booking.KhungGio.Ngay, booking.KhungGio.CaLamViecId));
-        }
-
-        var approvedShifts = await dbContext.DangKyCaSet
-            .Where(dk => dk.NhanVienId == assignee.Id && dk.TrangThai == ShiftRegistrationState.APPROVED)
-            .Select(dk => new { dk.Ngay, dk.CaLamViecId })
-            .ToListAsync(cancellationToken);
-
-        var hasMatchingShift = requiredShifts.All(rs =>
-            approvedShifts.Any(ap => ap.Ngay == rs.Ngay && ap.CaLamViecId == rs.CaLamViecId));
-
-        if (!hasMatchingShift)
-        {
-            return new CheckinResult(
-                StatusCodes.Status409Conflict,
-                Message: "Nhân viên được phân công chưa có ca làm việc APPROVED phù hợp.",
-                ErrorCode: "ASSIGNMENT_UNAVAILABLE");
-        }
-
-        var sizeBands = await dbContext.HeSoCanNangSet
-            .OrderBy(h => h.CanNangTu)
-            .ToListAsync(cancellationToken);
-
-        var actualBand = sizeBands.FirstOrDefault(b =>
-            request.CanNangThucTe >= b.CanNangTu &&
-            (!b.CanNangDen.HasValue || request.CanNangThucTe < b.CanNangDen.Value));
-
+        var bands = await dbContext.HeSoCanNangSet.AsNoTracking().OrderBy(band => band.CanNangTu).ToListAsync(cancellationToken);
+        var actualBand = FindBand(bands, request.CanNangThucTe);
         if (actualBand is null)
+            return new CareResult<BookingPet>(400, Message: "Không xác định được khoảng size phù hợp với cân nặng thực tế.",
+                ErrorCode: "VALIDATION_FAILED", Errors:
+                [new ApiErrorItem { Field = "canNangThucTe", Message = "Cân nặng không khớp bảng size." }]);
+        if (preflight)
+            return new CareResult<BookingPet>(200);
+
+        var lines = pet.DichVuTrongDonChiTietDonItems.Where(line => line.TrangThai != OrderServiceState.HUY).ToList();
+        var committedSize = frozenSize ?? pet.SizeChot ?? lines.Select(line => line.SizeChot).FirstOrDefault(size => size.HasValue)
+            ?? FindBand(bands, pet.CanNangKhaiBao)?.MaSize;
+        var reduce = request.QuyetDinhGia == PriceDecision.THU_GON;
+        if (reduce && committedSize is null)
+            return CareResult<BookingPet>.InvalidTransition("Không xác định được size đã cam kết để thu gọn dịch vụ.");
+
+        var finalSize = reduce ? committedSize!.Value : actualBand.MaSize;
+        decimal priceDelta = 0m;
+        foreach (var line in lines)
         {
-            return new CheckinResult(
-                StatusCodes.Status400BadRequest,
-                Message: "Không xác định được khoảng size phù hợp với cân nặng thực tế.",
-                ErrorCode: "VALIDATION_FAILED",
-                Errors: [new ApiErrorItem { Field = "canNangThucTe", Message = "Cân nặng không khớp bảng size." }]);
+            var previousSize = line.SizeChot ?? committedSize;
+            var previousPrice = line.GiaChot ?? (previousSize is { } size ? ReadPrice(line, size) : null);
+            var lineSize = reduce ? line.SizeChot ?? finalSize : finalSize;
+            var finalPrice = reduce ? previousPrice : await ResolveActualPriceAsync(line, actualBand, cancellationToken);
+            if (finalPrice is null)
+                return CareResult<BookingPet>.InvalidTransition("Không xác định được giá cho dịch vụ trong đơn.");
+
+            line.SizeChot = lineSize;
+            line.GiaChot = finalPrice;
+            line.UpdatedAt = now;
+            if (!reduce)
+                priceDelta += finalPrice.Value - (previousPrice ?? 0m);
         }
 
-        // Lưu file ảnh bên ngoài transaction SQL để tránh giữ lock khi ghi file.
-        var savedRelativePath = await SavePhotoOutsideTransactionAsync(photo.Content, photoExtension, cancellationToken);
-
-        try
+        pet.CanNangChot = request.CanNangThucTe;
+        pet.SizeThucTe = actualBand.MaSize;
+        pet.SizeChot = finalSize;
+        pet.ThoaThuanGia = reduce ? request.NoiDungThuGon!.Trim() : PriceDecision.SIZE_THUC_TE.ToString();
+        pet.TinhTrangLong = JsonSerializer.Serialize(furConditions);
+        pet.GhiChuSucKhoe = request.GhiChuSucKhoe.Trim();
+        pet.NhanVienId = assignee.Id;
+        pet.HoSoTiemChungId = request.MaHoSoTiemChung ?? pet.HoSoTiemChungId;
+        pet.CheckInAt = now;
+        pet.CheckInBoiId = actor.Id;
+        pet.TrangThaiChamSoc = PetCareState.WAITING;
+        pet.UpdatedAt = now;
+        if (request.MaHoSoTiemChung.HasValue || request.XacNhanGiayHopLe == true)
         {
-            await using var transaction = dbContext.Database.IsRelational()
-                ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
-                : null;
-
-            var now = DateTimeOffset.UtcNow;
-            var sizeChot = actualBand.MaSize;
-
-            chiTietDon.CanNangChot = request.CanNangThucTe;
-            chiTietDon.SizeThucTe = actualBand.MaSize;
-            chiTietDon.SizeChot = sizeChot;
-            chiTietDon.ThoaThuanGia = request.QuyetDinhGia == PriceDecision.THU_GON
-                ? request.NoiDungThuGon!.Trim()
-                : PriceDecision.SIZE_THUC_TE.ToString();
-            chiTietDon.TinhTrangLong = JsonSerializer.Serialize(normalizedFurConditions);
-            chiTietDon.GhiChuSucKhoe = request.GhiChuSucKhoe.Trim();
-            chiTietDon.NhanVienId = assignee.Id;
-            chiTietDon.HoSoTiemChungId = request.MaHoSoTiemChung;
-            chiTietDon.CheckInAt = now;
-            chiTietDon.CheckInBoiId = actor.Id;
-            chiTietDon.TrangThaiChamSoc = PetCareState.WAITING;
-            chiTietDon.UpdatedAt = now;
-
-            if (request.MaHoSoTiemChung.HasValue || request.XacNhanGiayHopLe == true)
-            {
-                chiTietDon.XacMinhTiemAt = now;
-                chiTietDon.XacMinhTiemBoiId = actor.Id;
-            }
-
-            chiTietDon.ThuCung.CanNang = request.CanNangThucTe;
-            chiTietDon.ThuCung.UpdatedAt = now;
-
-            decimal priceDelta = 0m;
-            foreach (var orderService in chiTietDon.DichVuTrongDonChiTietDonItems.Where(d => d.TrangThai != OrderServiceState.HUY))
-            {
-                var previousPrice = orderService.GiaChot ?? 0m;
-                orderService.SizeChot = sizeChot;
-                var resolvedPrice = await ResolveServicePriceAsync(orderService, actualBand.Id, sizeChot, cancellationToken);
-                if (resolvedPrice.HasValue)
-                {
-                    orderService.GiaChot = resolvedPrice.Value;
-                    priceDelta += resolvedPrice.Value - previousPrice;
-                }
-                orderService.UpdatedAt = now;
-            }
-
-            if (priceDelta != 0m)
-            {
-                booking.TongTamTinh = Math.Max(0m, booking.TongTamTinh + priceDelta);
-            }
-
-            if (booking.TrangThai == BookingState.CONFIRMED)
-            {
-                booking.TrangThai = BookingState.IN_PROGRESS;
-            }
-            booking.UpdatedAt = now;
-
-            var careLog = new NhatKyChamSoc
-            {
-                ChiTietDonId = chiTietDon.Id,
-                NhanVienId = actor.Id,
-                LoaiNhatKy = "CHECK_IN",
-                GhiNhanAt = now,
-                ObjectPath = savedRelativePath,
-                GhiChu = request.GhiChuSucKhoe.Trim(),
-                CanNangGhiNhan = request.CanNangThucTe,
-                CreatedAt = now,
-                UpdatedAt = now,
-                NhanVien = actor
-            };
-            dbContext.NhatKyChamSocSet.Add(careLog);
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            var responseDto = MapBookingPet(chiTietDon, assignee.TenNhanVien, normalizedFurConditions);
-
-            dbContext.AuditLogSet.Add(new AuditLog
-            {
-                ActorLoai = actor.VaiTro.ToString(),
-                ActorId = actor.Id,
-                HanhDong = AuditAction,
-                LoaiDoiTuong = AuditTargetType,
-                DoiTuongId = chiTietDon.Id,
-                TraceId = traceId,
-                RequestId = request.RequestId,
-                Fingerprint = fingerprint,
-                KetQua = JsonSerializer.Serialize(responseDto, JsonOptions),
-                CreatedAt = now
-            });
-
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            if (transaction is not null)
-            {
-                await transaction.CommitAsync(cancellationToken);
-            }
-
-            return new CheckinResult(StatusCodes.Status200OK, Data: responseDto, Message: "Check-in thú cưng thành công.");
+            pet.XacMinhTiemAt = now;
+            pet.XacMinhTiemBoiId = actor.Id;
         }
-        catch
+
+        pet.ThuCung.CanNang = request.CanNangThucTe;
+        pet.ThuCung.UpdatedAt = now;
+        booking.TongTamTinh = Math.Max(0m, booking.TongTamTinh + priceDelta);
+        booking.TrangThai = BookingState.IN_PROGRESS;
+        booking.UpdatedAt = now;
+
+        dbContext.NhatKyChamSocSet.Add(new NhatKyChamSoc
         {
-            DeletePhotoIfExists(savedRelativePath);
-            throw;
-        }
+            ChiTietDonId = pet.Id,
+            NhanVienId = actor.Id,
+            LoaiNhatKy = "CHECK_IN",
+            GhiNhanAt = now,
+            ObjectPath = objectPath,
+            GhiChu = pet.GhiChuSucKhoe,
+            CanNangGhiNhan = request.CanNangThucTe,
+            CreatedAt = now,
+            UpdatedAt = now
+        });
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return new CareResult<BookingPet>(200, CareProjection.Pet(pet, actor, assignee.TenNhanVien),
+            AssigneeId: assignee.Id, OverrideReason: hasCurrentShift ? null : "ADMIN_OVERRIDE_SHIFT");
     }
 
-    private async Task<CheckinResult?> ValidateFurConditionsAsync(
+    private static CheckinResult ToCheckinResult(CareResult<BookingPet> result) =>
+        new(result.StatusCode, result.Data, result.Message, result.ErrorCode, result.Errors);
+
+    private static CareResult<BookingPet> AssignmentUnavailable(string message) =>
+        new(409, Message: message, ErrorCode: "ASSIGNMENT_UNAVAILABLE");
+
+    private static HeSoCanNang? FindBand(List<HeSoCanNang> bands, decimal weight) =>
+        bands.Find(band => weight >= band.CanNangTu && (band.CanNangDen is null || weight < band.CanNangDen));
+
+    private async Task<CareResult<BookingPet>?> ValidateFurConditionsAsync(
         List<string> normalizedFurConditions,
         CancellationToken cancellationToken)
     {
         if (normalizedFurConditions.Count is < 1 or > 20)
         {
-            return new CheckinResult(
+            return new CareResult<BookingPet>(
                 StatusCodes.Status400BadRequest,
                 Message: "Tình trạng lông phải có từ 1 đến 20 mã hợp lệ.",
                 ErrorCode: "VALIDATION_FAILED",
@@ -385,7 +227,7 @@ public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment envir
         var allowedCodes = new HashSet<string>(StringComparer.Ordinal);
         if (furConfig is not null && !string.IsNullOrWhiteSpace(furConfig.GiaTri))
         {
-            var items = JsonSerializer.Deserialize<List<FurConditionItem>>(furConfig.GiaTri, JsonOptions) ?? [];
+            var items = JsonSerializer.Deserialize<List<FurConditionItem>>(furConfig.GiaTri, CareOperation.JsonOptions) ?? [];
             foreach (var item in items.Where(i => i.DangHoatDong && !string.IsNullOrWhiteSpace(i.Ma)))
             {
                 allowedCodes.Add(item.Ma);
@@ -395,7 +237,7 @@ public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment envir
         var invalidCodes = normalizedFurConditions.Where(c => !allowedCodes.Contains(c)).ToList();
         if (invalidCodes.Count > 0)
         {
-            return new CheckinResult(
+            return new CareResult<BookingPet>(
                 StatusCodes.Status400BadRequest,
                 Message: "Danh sách tình trạng lông chứa mã không hợp lệ hoặc đã ngừng hoạt động.",
                 ErrorCode: "VALIDATION_FAILED",
@@ -426,9 +268,9 @@ public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment envir
             errors.Add(new ApiErrorItem { Field = "requestId", Message = "requestId không được để trống." });
         }
 
-        if (request.CanNangThucTe <= 0 || decimal.Round(request.CanNangThucTe, 2) != request.CanNangThucTe)
+        if (request.CanNangThucTe is <= 0 or > 999.99m || decimal.Round(request.CanNangThucTe, 2) != request.CanNangThucTe)
         {
-            errors.Add(new ApiErrorItem { Field = "canNangThucTe", Message = "Cân nặng thực tế phải > 0 và tối đa 2 chữ số thập phân." });
+            errors.Add(new ApiErrorItem { Field = "canNangThucTe", Message = "Cân nặng thực tế phải > 0, <= 999.99 và tối đa 2 chữ số thập phân." });
         }
 
         if (request.TinhTrangLong is null || request.TinhTrangLong.Count < 1 || request.TinhTrangLong.Count > 20 ||
@@ -447,7 +289,7 @@ public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment envir
             errors.Add(new ApiErrorItem { Field = "ghiChuSucKhoe", Message = "ghiChuSucKhoe bắt buộc và tối đa 2000 ký tự." });
         }
 
-        if (!request.QuyetDinhGia.HasValue)
+        if (!request.QuyetDinhGia.HasValue || !Enum.IsDefined(request.QuyetDinhGia.Value))
         {
             errors.Add(new ApiErrorItem { Field = "quyetDinhGia", Message = "quyetDinhGia bắt buộc." });
         }
@@ -471,211 +313,79 @@ public class CheckinService(PetSpaDbContext dbContext, IWebHostEnvironment envir
         return errors;
     }
 
-    private static bool IsVaccinationRequired(ChiTietDon chiTietDon)
+    private static (bool VaccinationRequired, SizeBand? CommittedSize) ReadBookingPolicy(ChiTietDon pet)
     {
-        if (chiTietDon.DichVuTrongDonChiTietDonItems.Any(d =>
-                d.TrangThai != OrderServiceState.HUY && d.DichVu?.YeuCauTiemChung == true))
-        {
-            return true;
-        }
+        var requiredByCatalog = pet.DichVuTrongDonChiTietDonItems.Any(line =>
+            line.TrangThai != OrderServiceState.HUY && line.DichVu?.YeuCauTiemChung == true);
+        if (string.IsNullOrWhiteSpace(pet.DonDatLich.ChinhSachSnapshot))
+            return (requiredByCatalog, null);
 
-        if (!string.IsNullOrWhiteSpace(chiTietDon.DonDatLich.ChinhSachSnapshot))
+        try
         {
-            try
+            using var document = JsonDocument.Parse(pet.DonDatLich.ChinhSachSnapshot);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+                return (requiredByCatalog, null);
+
+            var legacyRequired = requiredByCatalog ||
+                (root.TryGetProperty("yeuCauTiemChung", out var legacy) && legacy.ValueKind == JsonValueKind.True);
+
+            if (root.TryGetProperty("thuCung", out var pets) && pets.ValueKind == JsonValueKind.Array)
             {
-                using var doc = JsonDocument.Parse(chiTietDon.DonDatLich.ChinhSachSnapshot);
-                if (doc.RootElement.ValueKind == JsonValueKind.Object &&
-                    doc.RootElement.TryGetProperty("yeuCauTiemChung", out var prop) &&
-                    prop.ValueKind == JsonValueKind.True)
+                foreach (var entry in pets.EnumerateArray())
                 {
-                    return true;
+                    if (entry.ValueKind != JsonValueKind.Object || !entry.TryGetProperty("maChiTietDon", out var id) ||
+                        id.ValueKind != JsonValueKind.Number || !id.TryGetInt32(out var persistedId) || persistedId != pet.Id)
+                        continue;
+
+                    var required = entry.TryGetProperty("yeuCauTiemChung", out var vaccine) &&
+                        vaccine.ValueKind is JsonValueKind.True or JsonValueKind.False ? vaccine.GetBoolean() : legacyRequired;
+                    SizeBand? size = entry.TryGetProperty("sizeCamKet", out var frozen) &&
+                        frozen.ValueKind == JsonValueKind.String && Enum.TryParse<SizeBand>(frozen.GetString(), out var parsed) &&
+                        Enum.IsDefined(parsed) ? parsed : null;
+                    return (required, size);
                 }
             }
-            catch (JsonException)
-            {
-            }
+            return (legacyRequired, null);
         }
-
-        return false;
+        catch (JsonException)
+        {
+            return (requiredByCatalog, null);
+        }
     }
 
-    private async Task<decimal?> ResolveServicePriceAsync(
-        PetSpa.Core.Entities.Billing.DichVuTrongDon orderService,
-        int sizeId,
-        SizeBand sizeChot,
-        CancellationToken cancellationToken)
+    private async Task<decimal?> ResolveActualPriceAsync(DichVuTrongDon line, HeSoCanNang band, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(orderService.BangGiaSizeSnapshot))
+        if (ReadPrice(line, band.MaSize) is { } snapshot)
+            return snapshot;
+        if (line.DichVuId is { } serviceId)
+            return await dbContext.BangGiaSizeSet.Where(price => price.DichVuId == serviceId && price.SizeId == band.Id)
+                .Select(price => (decimal?)price.DonGia).FirstOrDefaultAsync(cancellationToken);
+        return line.GiaChot;
+    }
+
+    private static decimal? ReadPrice(DichVuTrongDon line, SizeBand size)
+    {
+        if (string.IsNullOrWhiteSpace(line.BangGiaSizeSnapshot))
+            return null;
+
+        try
         {
-            try
+            using var document = JsonDocument.Parse(line.BangGiaSizeSnapshot);
+            if (document.RootElement.ValueKind == JsonValueKind.Object)
             {
-                var snapshotPrices = JsonSerializer.Deserialize<Dictionary<string, decimal>>(orderService.BangGiaSizeSnapshot, JsonOptions);
-                if (snapshotPrices is not null)
+                foreach (var price in document.RootElement.EnumerateObject())
                 {
-                    var match = snapshotPrices.FirstOrDefault(kv =>
-                        string.Equals(kv.Key, sizeChot.ToString(), StringComparison.OrdinalIgnoreCase));
-                    if (!string.IsNullOrEmpty(match.Key))
-                    {
-                        return match.Value;
-                    }
+                    if (price.Name.Equals(size.ToString(), StringComparison.OrdinalIgnoreCase) &&
+                        price.Value.ValueKind == JsonValueKind.Number && price.Value.TryGetDecimal(out var amount))
+                        return amount;
                 }
             }
-            catch (JsonException)
-            {
-            }
         }
-
-        if (orderService.DichVuId.HasValue)
+        catch (JsonException)
         {
-            return await dbContext.BangGiaSizeSet
-                .Where(b => b.DichVuId == orderService.DichVuId.Value && b.SizeId == sizeId)
-                .Select(b => (decimal?)b.DonGia)
-                .FirstOrDefaultAsync(cancellationToken);
+            // Older bookings may not have a readable size/price snapshot.
         }
-
-        return orderService.GiaChot;
-    }
-
-    private static string? DetectImageExtension(byte[] content)
-    {
-        if (content.Length >= 3 &&
-            content[0] == 0xFF && content[1] == 0xD8 && content[2] == 0xFF)
-        {
-            return ".jpg";
-        }
-
-        if (content.Length >= 8 &&
-            content[0] == 0x89 && content[1] == 0x50 && content[2] == 0x4E && content[3] == 0x47 &&
-            content[4] == 0x0D && content[5] == 0x0A && content[6] == 0x1A && content[7] == 0x0A)
-        {
-            return ".png";
-        }
-
-        if (content.Length >= 12 &&
-            content[0] == 0x52 && content[1] == 0x49 && content[2] == 0x46 && content[3] == 0x46 &&
-            content[8] == 0x57 && content[9] == 0x45 && content[10] == 0x42 && content[11] == 0x50)
-        {
-            return ".webp";
-        }
-
         return null;
-    }
-
-    private string GetStorageFullPath(string relativePath)
-    {
-        var root = environment.IsEnvironment("Testing")
-            ? Path.Combine(Path.GetTempPath(), "petspa-test-storage")
-            : Path.Combine(environment.ContentRootPath, "storage");
-        return Path.Combine(root, relativePath);
-    }
-
-    private async Task<string> SavePhotoOutsideTransactionAsync(
-        byte[] content,
-        string extension,
-        CancellationToken cancellationToken)
-    {
-        var relativePath = Path.Combine("check-in", $"{Guid.NewGuid():N}{extension}").Replace('\\', '/');
-        var fullPath = GetStorageFullPath(relativePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        await File.WriteAllBytesAsync(fullPath, content, cancellationToken);
-        return relativePath;
-    }
-
-    private void DeletePhotoIfExists(string relativePath)
-    {
-        var fullPath = GetStorageFullPath(relativePath);
-        if (File.Exists(fullPath))
-        {
-            File.Delete(fullPath);
-        }
-    }
-
-    private static string ComputeFingerprint(
-        int chiTietDonId,
-        Checkin request,
-        List<string> normalizedFurConditions,
-        CheckinPhotoInput photo)
-    {
-        var canonical = JsonSerializer.Serialize(new
-        {
-            chiTietDonId,
-            request.RequestId,
-            request.CanNangThucTe,
-            TinhTrangLong = normalizedFurConditions,
-            request.MaNhanVien,
-            GhiChuSucKhoe = request.GhiChuSucKhoe.Trim(),
-            request.QuyetDinhGia,
-            request.XacNhanKhach,
-            NoiDungThuGon = request.NoiDungThuGon?.Trim(),
-            request.MaHoSoTiemChung,
-            request.XacNhanGiayHopLe,
-            photo.FileName,
-            photo.Length
-        });
-
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
-        return Convert.ToHexString(hash);
-    }
-
-    private static BookingPet MapBookingPet(
-        ChiTietDon entity,
-        string assigneeName,
-        List<string> furConditions)
-    {
-        return new BookingPet
-        {
-            MaChiTietDon = entity.Id,
-            MaThuCung = entity.ThuCungId,
-            TenThuCung = entity.TenPetSnapshot,
-            TrangThai = entity.TrangThaiChamSoc.ToString(),
-            CanNangChot = entity.CanNangChot,
-            SizeThucTe = entity.SizeThucTe?.ToString(),
-            SizeChot = entity.SizeChot?.ToString(),
-            TinhTrangLong = furConditions,
-            MaLoaiPhong = entity.LoaiPhongId,
-            TenNhanVienPhuTrach = assigneeName,
-            DichVu = entity.DichVuTrongDonChiTietDonItems
-                .OrderBy(d => d.Id)
-                .Select(d => new OrderService
-                {
-                    MaDichVuTrongDon = d.Id,
-                    MaDichVu = d.DichVuId,
-                    MaCombo = d.ComboId,
-                    MaKhungGio = d.KhungGioId,
-                    TenDichVu = d.TenSnapshot,
-                    TrangThai = d.TrangThai.ToString(),
-                    SizeChot = d.SizeChot?.ToString(),
-                    GiaChot = d.GiaChot,
-                    ThanhPhan = d.ThanhPhanDichVuTrongDonDichVuTrongDonItems
-                        .OrderBy(tp => tp.Id)
-                        .Select(tp => new Component
-                        {
-                            MaThanhPhan = tp.Id,
-                            MaDichVu = tp.DichVuId,
-                            TenDichVu = tp.DichVu.TenDichVu,
-                            TrangThai = tp.TrangThai.ToString(),
-                            HoanTatAt = tp.HoanTatAt
-                        })
-                        .ToList()
-                })
-                .ToList(),
-            NhatKy = entity.NhatKyChamSocChiTietDonItems
-                .OrderBy(nk => nk.GhiNhanAt)
-                .ThenBy(nk => nk.Id)
-                .Select(nk => new CareLog
-                {
-                    MaNhatKy = nk.Id,
-                    LoaiNhatKy = nk.LoaiNhatKy,
-                    GhiChu = nk.GhiChu,
-                    AnhUrl = string.IsNullOrWhiteSpace(nk.ObjectPath) ? null : $"/storage/{nk.ObjectPath}",
-                    CanNangTheoDoi = nk.CanNangGhiNhan,
-                    TenTacGia = nk.NhanVien?.TenNhanVien ?? string.Empty,
-                    GhiNhanAt = nk.GhiNhanAt
-                })
-                .ToList(),
-            NhanSom = entity.NhanSom,
-            BanGiaoAt = entity.BanGiaoAt,
-            TraLaiAt = entity.TraLaiAt
-        };
     }
 }

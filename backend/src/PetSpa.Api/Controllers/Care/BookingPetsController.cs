@@ -2,6 +2,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using PetSpa.Api.Services.Care;
 using PetSpa.Core.Common;
 using PetSpa.Core.DTOs.Care;
 using PetSpa.Core.Interfaces.Care;
@@ -79,6 +80,9 @@ public class BookingPetsController(
                 [new ApiErrorItem { Field = "anhTiepNhan", Message = "File anhTiepNhan là bắt buộc." }],
                 HttpContext.TraceIdentifier));
         }
+
+        if (anhTiepNhan.Length > CareOperation.MaxPhotoBytes)
+            return OversizedPhoto<BookingPet>("anhTiepNhan");
 
         await using var ms = new MemoryStream();
         await anhTiepNhan.CopyToAsync(ms, cancellationToken);
@@ -162,6 +166,9 @@ public class BookingPetsController(
         CarePhotoInput? photoInput = null;
         if (anhThanhPham is not null)
         {
+            if (anhThanhPham.Length > CareOperation.MaxPhotoBytes)
+                return OversizedPhoto<BookingPet>("anhThanhPham");
+
             await using var ms = new MemoryStream();
             await anhThanhPham.CopyToAsync(ms, cancellationToken);
             photoInput = new CarePhotoInput(
@@ -245,6 +252,9 @@ public class BookingPetsController(
         CarePhotoInput? photoInput = null;
         if (anh is not null)
         {
+            if (anh.Length > CareOperation.MaxPhotoBytes)
+                return OversizedPhoto<CareLog>("anh");
+
             await using var ms = new MemoryStream();
             await anh.CopyToAsync(ms, cancellationToken);
             photoInput = new CarePhotoInput(
@@ -311,4 +321,10 @@ public class BookingPetsController(
 
         return Ok(ApiResponse<BookingPet>.Ok(result.Data!, result.Message));
     }
+    private ObjectResult OversizedPhoto<T>(string field) =>
+        StatusCode(StatusCodes.Status413PayloadTooLarge, ApiResponse<T>.Fail(
+            "Ảnh vượt quá dung lượng tối đa 5 MiB.",
+            "FILE_TOO_LARGE",
+            [new ApiErrorItem { Field = field, Message = "Kích thước ảnh tối đa 5 MiB." }],
+            HttpContext.TraceIdentifier));
 }
