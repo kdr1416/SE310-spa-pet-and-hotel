@@ -146,7 +146,7 @@ public sealed class BookingCreateService(
                     var selection = request.ThuCung[index];
                     var objectPath = selection.VaccinationFileKey is { } key ? uploaded[key] : null;
                     var vaccinationRequired = selection.DichVu.Any(service => services[service.MaDichVu!.Value].VaccinationRequired);
-                    return new PetPolicy(pet.Id, selection.LoaiLong, selection.GhiChuDiUng, vaccinationRequired, objectPath);
+                    return new PetPolicy(pet.Id, selection.LoaiLong, selection.GhiChuDiUng, vaccinationRequired, objectPath, sizes[index]!.MaSize.ToString());
                 }).ToArray();
                 booking.ChinhSachSnapshot = JsonSerializer.Serialize(new BookingPolicy(request.GhiChu, petPolicies, response), JsonOptions);
                 await db.SaveChangesAsync(cancellationToken);
@@ -466,5 +466,5 @@ public sealed class BookingCreateService(
     private sealed record ServiceSnapshot(string Name, int Duration, bool VaccinationRequired, Dictionary<SizeBand, decimal> Prices);
     private sealed record BookingPolicy(string? GhiChu, IReadOnlyList<PetPolicy> ThuCung, BookingResponse CreationResponse);
     private sealed record PetPolicy(
-        int MaChiTietDon, string? LoaiLong, string? GhiChuDiUng, bool YeuCauTiemChung, string? VaccinationObjectPath);
+        int MaChiTietDon, string? LoaiLong, string? GhiChuDiUng, bool YeuCauTiemChung, string? VaccinationObjectPath, string SizeCamKet);
 }

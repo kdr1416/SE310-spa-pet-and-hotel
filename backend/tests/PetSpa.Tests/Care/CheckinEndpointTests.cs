@@ -9,8 +9,10 @@ using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Npgsql;
 using PetSpa.Api.Data;
 using PetSpa.Api.Services.Identity;
+using PetSpa.Api.Services.Storage;
 using PetSpa.Core.Common;
 using PetSpa.Core.DTOs.Care;
 using PetSpa.Core.Entities.Billing;
@@ -86,13 +88,14 @@ public class CheckinEndpointTests
         BookingState bookingState = BookingState.CONFIRMED,
         PetCareState petState = PetCareState.NOT_ARRIVED,
         bool grantCheckinPermission = true,
-        bool assigneeHasApprovedShift = true)
+        bool assigneeHasApprovedShift = true,
+        bool grantCarePermission = true)
     {
         var today = new DateOnly(2026, 11, 20);
-        var now = DateTimeOffset.UtcNow;
+        var now = CareTestSupport.Now;
 
         var permission = new Quyen { MaQuyen = "CHECKIN_PERFORM", TenQuyen = "CHECKIN_PERFORM" };
-        db.QuyenSet.Add(permission);
+        db.QuyenSet.AddRange(permission, new Quyen { MaQuyen = "CARE_UPDATE", TenQuyen = "CARE_UPDATE" });
 
         var reception = new NhanVien
         {
@@ -122,6 +125,17 @@ public class CheckinEndpointTests
             {
                 NhanVienId = reception.Id,
                 MaQuyen = "CHECKIN_PERFORM",
+                CapBoiId = reception.Id,
+                CapAt = now
+            });
+        }
+
+        if (grantCarePermission)
+        {
+            db.NhanVienQuyenSet.Add(new NhanVienQuyen
+            {
+                NhanVienId = careStaff.Id,
+                MaQuyen = "CARE_UPDATE",
                 CapBoiId = reception.Id,
                 CapAt = now
             });
@@ -272,10 +286,306 @@ public class CheckinEndpointTests
         db.SaveChanges();
     }
 
+    [Theory]
+    [InlineData(false, 1)]
+    [InlineData(true, 5)]
+    public async Task CheckIn_RequiresActiveCareGrantAndCurrentShift(bool grantCarePermission, int utcHour)
+    {
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db, grantCarePermission: grantCarePermission),
+            clock: new CareTestSupport.Clock(new DateTimeOffset(2026, 11, 20, utcHour, 0, 0, TimeSpan.Zero)));
+        using var client = CreateAuthorizedClient(factory);
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
+        body!.ErrorCode.Should().Be("ASSIGNMENT_UNAVAILABLE");
+    }
+
+    [Fact]
+    public async Task CheckIn_ThuGonKeepsCommittedSizeAndPrice()
+    {
+        using var factory = CareTestSupport.Create(db =>
+        {
+            SeedCheckinScenario(db);
+            var service = db.DichVuTrongDonSet.Single();
+            service.SizeChot = null;
+            service.GiaChot = null;
+            db.BangGiaSizeSet.Single(price => price.SizeId == 1).DonGia = 999000m;
+            db.HeSoCanNangSet.Single(band => band.MaSize == SizeBand.S).CanNangDen = 4m;
+            db.HeSoCanNangSet.Single(band => band.MaSize == SizeBand.M).CanNangTu = 4m;
+            db.DonDatLichSet.Single().ChinhSachSnapshot = """
+                {"thuCung":[{"maChiTietDon":10,"sizeCamKet":"S","yeuCauTiemChung":false}]}
+                """;
+            db.SaveChanges();
+        });
+        using var client = CreateAuthorizedClient(factory);
+        var request = CreateValidPayload();
+        request.QuyetDinhGia = PriceDecision.THU_GON;
+        request.NoiDungThuGon = "Giữ gói giá đã xác nhận";
+        using var form = BuildCheckinForm(request, ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
+        body!.Data!.SizeThucTe.Should().Be("M");
+        body.Data.SizeChot.Should().Be("S");
+        body.Data.DichVu.Should().ContainSingle().Which.GiaChot.Should().Be(150000m);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        (await db.DonDatLichSet.SingleAsync()).TongTamTinh.Should().Be(150000m);
+    }
+
+    [Theory]
+    [InlineData(true, false, HttpStatusCode.BadRequest)]
+    [InlineData(false, true, HttpStatusCode.OK)]
+    public async Task CheckIn_PerPetVaccinationSnapshotWinsOverChangedCatalog(
+        bool requiredAtBooking, bool requiredNow, HttpStatusCode expectedStatus)
+    {
+        using var factory = CareTestSupport.Create(db =>
+        {
+            SeedCheckinScenario(db);
+            db.DichVuSet.Single().YeuCauTiemChung = requiredNow;
+            db.DonDatLichSet.Single().ChinhSachSnapshot = JsonSerializer.Serialize(new
+            {
+                thuCung = new[] { new { maChiTietDon = 10, yeuCauTiemChung = requiredAtBooking,
+                    vaccinationObjectPath = "unverified-document.png" } }
+            });
+            db.SaveChanges();
+        });
+        using var client = CreateAuthorizedClient(factory);
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(expectedStatus);
+        using var scope = factory.Services.CreateScope();
+        var pet = await scope.ServiceProvider.GetRequiredService<PetSpaDbContext>().ChiTietDonSet.SingleAsync();
+        pet.XacMinhTiemAt.Should().BeNull();
+        pet.HoSoTiemChungId.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task CheckIn_ReplayAfterFurDeactivationReturnsSavedCodesAndSignsAfterCommit()
+    {
+        var storage = new CareTestSupport.Storage();
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db), storage);
+        using var client = CreateAuthorizedClient(factory);
+        var request = CreateValidPayload();
+        storage.BeforeRead = async (path, ct) =>
+        {
+            using var scope = factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+            (await db.NhatKyChamSocSet.SingleAsync(ct)).ObjectPath.Should().Be(path);
+            (await db.AuditLogSet.SingleAsync(ct)).KetQua.Should().NotContain(path).And.NotContain("https://");
+        };
+        using var form = BuildCheckinForm(request, ValidPngBytes);
+        var first = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+        first.StatusCode.Should().Be(HttpStatusCode.OK);
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+            var config = await db.CauHinhHeThongSet.SingleAsync();
+            config.GiaTri = "[]";
+            await db.SaveChangesAsync();
+        }
+
+        using var retryForm = BuildCheckinForm(request, ValidPngBytes);
+        var retry = await client.PostAsync("/api/internal/booking-pets/10/check-in", retryForm);
+
+        retry.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await retry.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
+        body!.Data!.TinhTrangLong.Should().Equal("BINH_THUONG", "ROI_NHE");
+        body.Data.NhatKy.Single().AnhUrl.Should().StartWith("https://photo.test/");
+        storage.Uploads.Should().ContainSingle();
+        storage.Reads.Should().HaveCount(2);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CheckIn_FailedUploadOrRevokedGrantLeavesNoCommittedCareChanges(bool failUpload)
+    {
+        var storage = new CareTestSupport.Storage();
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db), storage);
+        using var client = CreateAuthorizedClient(factory);
+        storage.BeforeUpload = async ct =>
+        {
+            if (failUpload)
+                throw new FileStorageException("Ảnh không tải được.", "STORAGE_UNAVAILABLE");
+
+            using var scope = factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+            db.NhanVienQuyenSet.Remove(await db.NhanVienQuyenSet.SingleAsync(q => q.MaQuyen == "CHECKIN_PERFORM", ct));
+            await db.SaveChangesAsync(ct);
+        };
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(failUpload ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.Forbidden);
+        using var saved = factory.Services.CreateScope();
+        var db = saved.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        (await db.ChiTietDonSet.SingleAsync()).TrangThaiChamSoc.Should().Be(PetCareState.NOT_ARRIVED);
+        (await db.AuditLogSet.CountAsync()).Should().Be(0);
+        (await db.NhatKyChamSocSet.CountAsync()).Should().Be(0);
+        storage.Deletes.Should().Equal(storage.Uploads);
+    }
+
+    [Fact]
+    public async Task CheckIn_WhenCancellationWinsDuringUploadRollsBackPhotoAndState()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var db = database.CreateContext();
+        SeedCheckinScenario(db);
+        db.QuyenSet.Add(new Quyen { MaQuyen = "BOOKING_APPROVE", TenQuyen = "BOOKING_APPROVE" });
+        db.NhanVienQuyenSet.Add(new NhanVienQuyen { NhanVienId = 201, MaQuyen = "BOOKING_APPROVE", CapBoiId = 201 });
+        var booking = await db.DonDatLichSet.SingleAsync();
+        booking.BatDauDuKien = CareTestSupport.Now.AddHours(3);
+        booking.KetThucDuKien = booking.BatDauDuKien.AddHours(1);
+        var slot = await db.KhungGioDatLichSet.SingleAsync();
+        slot.SlotDaDat = 1;
+        slot.PhutDaGiu = 60;
+        await db.SaveChangesAsync();
+
+        var storage = new CareTestSupport.Storage();
+        var uploading = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var resume = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        storage.BeforeUpload = async ct =>
+        {
+            uploading.TrySetResult();
+            await resume.Task.WaitAsync(ct);
+        };
+        await using var postgres = new PostgresWebApplicationFactory(database.ConnectionString);
+        await using var factory = CareTestSupport.Configure(postgres, storage);
+        using var client = CreateAuthorizedClient(factory);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        await using var blocker = new NpgsqlConnection(database.ConnectionString);
+        await blocker.OpenAsync(timeout.Token);
+        await using var transaction = await blocker.BeginTransactionAsync(timeout.Token);
+        await using var hold = new NpgsqlCommand("SELECT id FROM don_dat_lich WHERE id = 1 FOR UPDATE", blocker, transaction);
+        await hold.ExecuteScalarAsync(timeout.Token);
+
+        var checkIn = client.PostAsync("/api/internal/booking-pets/10/check-in", form, timeout.Token);
+        Task<HttpResponseMessage> cancel;
+        try
+        {
+            await uploading.Task.WaitAsync(timeout.Token);
+            cancel = client.PostAsJsonAsync("/api/internal/bookings/1/cancel",
+                new { requestId = Guid.NewGuid(), loaiHuy = "STAFF_CANCELLED", lyDo = "Khách yêu cầu hủy" }, timeout.Token);
+            await CareTestSupport.WaitForLockWaitersAsync(
+                database.ConnectionString, "%don_dat_lich%FOR UPDATE%", 1, timeout.Token);
+            resume.TrySetResult();
+            await CareTestSupport.WaitForLockWaitersAsync(
+                database.ConnectionString, "%don_dat_lich%FOR UPDATE%", 2, timeout.Token);
+        }
+        finally
+        {
+            resume.TrySetResult();
+            await transaction.CommitAsync();
+        }
+
+        using var cancellation = await cancel;
+        cancellation.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var response = await checkIn;
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await db.DonDatLichSet.AsNoTracking().SingleAsync()).TrangThai.Should().Be(BookingState.CANCELLED);
+        (await db.ChiTietDonSet.AsNoTracking().SingleAsync()).CheckInAt.Should().BeNull();
+        (await db.NhatKyChamSocSet.CountAsync()).Should().Be(0);
+        storage.Deletes.Should().ContainSingle().Which.Should().Be(storage.Uploads.Single());
+    }
+
+    [Fact]
+    public async Task CheckIn_ConcurrentRequestKeyAcrossBookingsRollsBackLosingPetAndPhoto()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        await using var db = database.CreateContext();
+        SeedCheckinScenario(db);
+        db.DonDatLichSet.Add(new DonDatLich
+        {
+            Id = 2,
+            RequestId = Guid.NewGuid(),
+            Fingerprint = "second",
+            TrackingCode = "TRK-8X2B",
+            TrangThai = BookingState.CONFIRMED,
+            TenNguoiDat = "Nguyễn Văn A",
+            SoDienThoaiSnapshot = "0912345678",
+            EmailSnapshot = "khach@example.com",
+            BatDauDuKien = CareTestSupport.Now,
+            KetThucDuKien = CareTestSupport.Now.AddHours(1),
+            MocCuoiCa = CareTestSupport.Now.AddHours(4),
+            ChinhSachSnapshot = "{}",
+            KhachHangId = 1,
+            KhungGioId = 1
+        });
+        db.ThuCungSet.Add(new ThuCung { Id = 2, KhachHangId = 1, TenThuCung = "Bông", LoaiPet = PetType.MEO, CanNang = 4m });
+        db.ChiTietDonSet.Add(new ChiTietDon
+        {
+            Id = 20,
+            DonDatLichId = 2,
+            ThuCungId = 2,
+            TenPetSnapshot = "Bông",
+            CanNangKhaiBao = 4m,
+            TrangThaiChamSoc = PetCareState.NOT_ARRIVED
+        });
+        await db.SaveChangesAsync();
+
+        var storage = new CareTestSupport.Storage();
+        await using var postgres = new PostgresWebApplicationFactory(database.ConnectionString);
+        await using var factory = CareTestSupport.Configure(postgres, storage);
+        using var client = CreateAuthorizedClient(factory);
+        await using var blocker = new NpgsqlConnection(database.ConnectionString);
+        await blocker.OpenAsync();
+        await using var transaction = await blocker.BeginTransactionAsync();
+        await using var hold = new NpgsqlCommand("LOCK TABLE audit_log IN SHARE MODE", blocker, transaction);
+        await hold.ExecuteNonQueryAsync();
+
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var request = CreateValidPayload();
+        using var form1 = BuildCheckinForm(request, ValidPngBytes);
+        using var form2 = BuildCheckinForm(request, ValidPngBytes);
+        var first = client.PostAsync("/api/internal/booking-pets/10/check-in", form1, timeout.Token);
+        var second = client.PostAsync("/api/internal/booking-pets/20/check-in", form2, timeout.Token);
+        try
+        {
+            await CareTestSupport.WaitForLockWaitersAsync(database.ConnectionString, "%INSERT INTO audit_log%", 2, timeout.Token);
+        }
+        finally
+        {
+            await transaction.CommitAsync();
+        }
+
+        using var one = await first;
+        using var two = await second;
+        new[] { one.StatusCode, two.StatusCode }.Should().BeEquivalentTo([HttpStatusCode.OK, HttpStatusCode.Conflict]);
+        var loser = one.StatusCode == HttpStatusCode.Conflict ? one : two;
+        var failed = await loser.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
+        failed!.ErrorCode.Should().Be("IDEMPOTENCY_CONFLICT");
+        var saved = await db.ChiTietDonSet.AsNoTracking().ToListAsync();
+        saved.Should().ContainSingle(pet => pet.TrangThaiChamSoc == PetCareState.WAITING);
+        saved.Should().ContainSingle(pet => pet.TrangThaiChamSoc == PetCareState.NOT_ARRIVED);
+        (await db.AuditLogSet.CountAsync()).Should().Be(1);
+        storage.Uploads.Should().HaveCount(2);
+        storage.Deletes.Should().ContainSingle();
+        (await db.NhatKyChamSocSet.SingleAsync()).ObjectPath.Should().Be(storage.Uploads.Except(storage.Deletes).Single());
+    }
+
+    private static HttpClient CreateAuthorizedClient(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> factory)
+    {
+        var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        return client;
+    }
+
     [Fact]
     public async Task CheckIn_ValidRequest_TransitionsPetToWaitingAndBookingToInProgress()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -314,7 +624,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_BookingPending_Returns409InvalidTransition()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db, bookingState: BookingState.PENDING));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db, bookingState: BookingState.PENDING));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -332,7 +642,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_PetNotFound_Returns404NotFound()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -350,7 +660,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_InvalidFurConditionCode_Returns400ValidationFailed()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -371,7 +681,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_ThuGonWithoutNoiDung_Returns400ValidationFailed()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -393,7 +703,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_AssigneeWithoutApprovedShift_Returns409AssignmentUnavailable()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db, assigneeHasApprovedShift: false));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db, assigneeHasApprovedShift: false));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -411,7 +721,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_MissingJwt_Returns401Unauthorized()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db));
         using var client = factory.CreateClient();
 
         using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
@@ -423,7 +733,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_WithoutPermission_Returns403Forbidden()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db, grantCheckinPermission: false));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db, grantCheckinPermission: false));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -440,7 +750,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_DuplicateRequestId_SamePayloadReturns200_DifferentPayloadReturns409()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });
@@ -469,7 +779,7 @@ public class CheckinEndpointTests
     [Fact]
     public async Task CheckIn_UnsupportedFileSignature_Returns415UnsupportedFile()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCheckinScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCheckinScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 201, TenDangNhap = "reception1", VaiTro = Role.STAFF });

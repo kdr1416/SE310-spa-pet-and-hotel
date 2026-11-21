@@ -95,6 +95,7 @@ builder.Services.AddScoped<BookingManagementService>();
 builder.Services.AddScoped<TrackingService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
+builder.Services.AddScoped<CareOperation>();
 builder.Services.AddScoped<ICheckinService, CheckinService>();
 builder.Services.AddScoped<ICareService, CareService>();
 builder.Services.AddScoped<IHandoverService, HandoverService>();
