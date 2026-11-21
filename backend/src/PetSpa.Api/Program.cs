@@ -47,6 +47,7 @@ builder.Services.AddControllers()
 
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
+builder.Services.AddScoped<IBookingService, BookingService>();
 builder.Services.AddScoped<ICheckinService, CheckinService>();
 builder.Services.AddScoped<ICareService, CareService>();
 builder.Services.AddScoped<IHandoverService, HandoverService>();
