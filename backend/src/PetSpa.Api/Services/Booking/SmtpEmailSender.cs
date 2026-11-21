@@ -5,7 +5,15 @@ namespace PetSpa.Api.Services.Booking;
 
 public sealed class SmtpEmailSender(IConfiguration configuration) : IEmailSender
 {
-    public async Task SendTrackingCodeAsync(string recipient, string trackingCode, CancellationToken cancellationToken)
+    public Task SendTrackingCodeAsync(string recipient, string trackingCode, CancellationToken cancellationToken) =>
+        SendAsync(recipient, "Mã tra cứu lịch PetSpa",
+            $"Mã tra cứu lịch hẹn của bạn là {trackingCode}. Vui lòng giữ mã để tra cứu lịch trên PetSpa.", cancellationToken);
+
+    public Task SendBookingConfirmedAsync(string recipient, string trackingCode, CancellationToken cancellationToken) =>
+        SendAsync(recipient, "PetSpa đã xác nhận lịch hẹn",
+            $"PetSpa đã xác nhận lịch hẹn của bạn. Mã tra cứu lịch hẹn là {trackingCode}.", cancellationToken);
+
+    private async Task SendAsync(string recipient, string subject, string body, CancellationToken cancellationToken)
     {
         var smtp = configuration.GetSection("Smtp");
         var host = smtp["Host"];
@@ -13,8 +21,7 @@ public sealed class SmtpEmailSender(IConfiguration configuration) : IEmailSender
         if (string.IsNullOrWhiteSpace(host) || string.IsNullOrWhiteSpace(from))
             throw new InvalidOperationException("Thiếu cấu hình SMTP.");
 
-        using var message = new MailMessage(from, recipient, "Mã tra cứu lịch PetSpa",
-            $"Mã tra cứu lịch hẹn của bạn là {trackingCode}. Vui lòng giữ mã để tra cứu lịch trên PetSpa.");
+        using var message = new MailMessage(from, recipient, subject, body);
         using var client = new SmtpClient(host, smtp.GetValue("Port", 587))
         {
             EnableSsl = smtp.GetValue("EnableSsl", true)
