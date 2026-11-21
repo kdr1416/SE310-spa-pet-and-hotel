@@ -77,7 +77,7 @@ public class CareLogsEndpointTests
         bool assigneeHasApprovedShift = true)
     {
         var today = new DateOnly(2026, 11, 20);
-        var now = DateTimeOffset.UtcNow;
+        var now = CareTestSupport.Now;
 
         var photoPerm = new Quyen { MaQuyen = "PHOTO_UPLOAD", TenQuyen = "PHOTO_UPLOAD" };
         db.QuyenSet.Add(photoPerm);
@@ -273,10 +273,75 @@ public class CareLogsEndpointTests
         db.SaveChanges();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CareLogs_ReplayRedactsPhotoAfterAssignmentOrShiftRevocation(bool revokeAssignment)
+    {
+        var storage = new CareTestSupport.Storage();
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db), storage);
+        using var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var request = new CareLogCreate { RequestId = Guid.NewGuid(), GhiChu = "Theo dõi sau khi tắm" };
+        using var form = BuildCareLogForm(request, ValidPngBytes);
+        using var first = await client.PostAsync("/api/internal/booking-pets/10/care-logs", form);
+        first.StatusCode.Should().Be(HttpStatusCode.Created);
+        var committed = (await first.Content.ReadFromJsonAsync<ApiResponse<CareLog>>())!.Data!;
+        committed.AnhUrl.Should().StartWith("https://photo.test/");
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        if (revokeAssignment)
+            (await db.ChiTietDonSet.SingleAsync()).NhanVienId = null;
+        else
+            (await db.DangKyCaSet.SingleAsync(shift => shift.NhanVienId == 202)).TrangThai = ShiftRegistrationState.REJECTED;
+        await db.SaveChangesAsync();
+
+        using var retryForm = BuildCareLogForm(request, ValidPngBytes);
+        using var retry = await client.PostAsync("/api/internal/booking-pets/10/care-logs", retryForm);
+
+        retry.StatusCode.Should().Be(HttpStatusCode.OK);
+        var replay = (await retry.Content.ReadFromJsonAsync<ApiResponse<CareLog>>())!.Data!;
+        replay.MaNhatKy.Should().Be(committed.MaNhatKy);
+        replay.GhiChu.Should().Be(committed.GhiChu);
+        replay.AnhUrl.Should().BeNull();
+        storage.Reads.Should().ContainSingle();
+        storage.Uploads.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task CareLogs_ShiftRevokedDuringUploadRejectsLogAndDeletesOrphan()
+    {
+        var storage = new CareTestSupport.Storage();
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db), storage);
+        using var client = factory.CreateClient();
+        var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        storage.BeforeUpload = async ct =>
+        {
+            using var scope = factory.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+            var shift = await db.DangKyCaSet.SingleAsync(shift => shift.NhanVienId == 202, ct);
+            shift.TrangThai = ShiftRegistrationState.REJECTED;
+            await db.SaveChangesAsync(ct);
+        };
+        using var form = BuildCareLogForm(new CareLogCreate { RequestId = Guid.NewGuid() }, ValidPngBytes);
+
+        using var response = await client.PostAsync("/api/internal/booking-pets/10/care-logs", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        using var saved = factory.Services.CreateScope();
+        var savedDb = saved.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        (await savedDb.NhatKyChamSocSet.CountAsync()).Should().Be(0);
+        (await savedDb.AuditLogSet.CountAsync()).Should().Be(0);
+        storage.Deletes.Should().ContainSingle().Which.Should().Be(storage.Uploads.Single());
+    }
+
     [Fact]
     public async Task CareLogs_WithPhotoNoteAndWeight_Returns201_AndDoesNotOverwriteFinalWeight()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -298,7 +363,7 @@ public class CareLogsEndpointTests
         body.Data!.MaNhatKy.Should().BeGreaterThan(0);
         body.Data.LoaiNhatKy.Should().Be("CARE_LOG");
         body.Data.GhiChu.Should().Be("Bé vừa tắm xong, đang sấy khô");
-        body.Data.AnhUrl.Should().StartWith("/storage/care-logs/");
+        body.Data.AnhUrl.Should().StartWith("https://photo.test/");
         body.Data.CanNangTheoDoi.Should().Be(7.80m);
         body.Data.TenTacGia.Should().Be("KTV Spa");
 
@@ -317,7 +382,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_NoteOnlyWithoutPhoto_Returns201Created()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -340,7 +405,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_PhotoOnlyWithoutNote_Returns201Created()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -355,14 +420,14 @@ public class CareLogsEndpointTests
 
         response.StatusCode.Should().Be(HttpStatusCode.Created);
         var body = await response.Content.ReadFromJsonAsync<ApiResponse<CareLog>>();
-        body!.Data!.AnhUrl.Should().StartWith("/storage/care-logs/");
+        body!.Data!.AnhUrl.Should().StartWith("https://photo.test/");
         body.Data.GhiChu.Should().BeNull();
     }
 
     [Fact]
     public async Task CareLogs_WithoutNoteAndWithoutPhoto_Returns400ValidationFailed()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -386,7 +451,7 @@ public class CareLogsEndpointTests
     [InlineData(PetCareState.CANCELLED)]
     public async Task CareLogs_InvalidPetState_Returns409InvalidTransition(PetCareState invalidState)
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db, petState: invalidState));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db, petState: invalidState));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -408,7 +473,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_WrongActorOrWithoutPermission_Returns403Forbidden()
     {
-        using var factory1 = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory1 = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client1 = factory1.CreateClient();
         var wrongActorToken = GenerateJwtFor(new NhanVien { Id = 203, TenDangNhap = "care2", VaiTro = Role.STAFF });
         client1.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", wrongActorToken);
@@ -416,7 +481,7 @@ public class CareLogsEndpointTests
         var res1 = await client1.PostAsync("/api/internal/booking-pets/10/care-logs", form1);
         res1.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 
-        using var factory2 = AuthApplicationFactory.Create(db => SeedCareLogScenario(db, grantPhotoPermission: false));
+        using var factory2 = CareTestSupport.Create(db => SeedCareLogScenario(db, grantPhotoPermission: false));
         using var client2 = factory2.CreateClient();
         var staffToken = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
         client2.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", staffToken);
@@ -428,7 +493,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_AdminOverrideActor_Succeeds()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var adminToken = GenerateJwtFor(new NhanVien { Id = 200, TenDangNhap = "admin", VaiTro = Role.ADMIN });
@@ -450,7 +515,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_DuplicateRequestId_SamePayloadReturns200_DifferentPayloadReturns409()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -488,7 +553,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_MissingJwt_Returns401Unauthorized()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         using var form = BuildCareLogForm(new CareLogCreate { RequestId = Guid.NewGuid(), GhiChu = "Test" });
@@ -500,7 +565,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_PetNotFound_Returns404NotFound()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });
@@ -515,7 +580,7 @@ public class CareLogsEndpointTests
     [Fact]
     public async Task CareLogs_UnsupportedFileSignature_Returns415UnsupportedFile()
     {
-        using var factory = AuthApplicationFactory.Create(db => SeedCareLogScenario(db));
+        using var factory = CareTestSupport.Create(db => SeedCareLogScenario(db));
         using var client = factory.CreateClient();
 
         var token = GenerateJwtFor(new NhanVien { Id = 202, TenDangNhap = "care1", VaiTro = Role.STAFF });

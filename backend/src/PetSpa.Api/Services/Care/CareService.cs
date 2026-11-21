@@ -1,6 +1,3 @@
-using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
 using PetSpa.Core.Common;
@@ -13,21 +10,8 @@ using PetSpa.Core.Interfaces.Care;
 
 namespace PetSpa.Api.Services.Care;
 
-public class CareService(PetSpaDbContext dbContext, IWebHostEnvironment environment) : ICareService
+public class CareService(PetSpaDbContext dbContext, CareOperation operation) : ICareService
 {
-    private const long MaxPhotoBytes = 5 * 1024 * 1024;
-    private const string CareUpdatePermission = "CARE_UPDATE";
-    private const string PhotoUploadPermission = "PHOTO_UPLOAD";
-    private const string CareActionAuditAction = "CARE_ACTION";
-    private const string CareLogAuditAction = "CARE_LOG_CREATE";
-    private const string PhotoExceptionAuditAction = "PHOTO_EXCEPTION_APPROVE";
-    private const string AuditTargetType = "ChiTietDon";
-
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true
-    };
-
     public async Task<CareActionResult> ExecuteCareActionAsync(
         int chiTietDonId,
         int actorId,
@@ -36,276 +20,33 @@ public class CareService(PetSpaDbContext dbContext, IWebHostEnvironment environm
         string traceId,
         CancellationToken cancellationToken = default)
     {
-        var actor = await dbContext.NhanVienSet
-            .Include(nv => nv.NhanVienQuyenNhanVienItems)
-            .FirstOrDefaultAsync(nv => nv.Id == actorId, cancellationToken);
+        var errors = ValidateCareActionRequest(chiTietDonId, request, photo);
+        if (errors.Count > 0)
+            return new CareActionResult(400, Message: "Dữ liệu cập nhật chăm sóc không hợp lệ.",
+                ErrorCode: "VALIDATION_FAILED", Errors: errors);
 
-        if (actor is null || !actor.IsActive ||
-            !actor.NhanVienQuyenNhanVienItems.Any(q => q.MaQuyen == CareUpdatePermission))
+        var result = CareOperation.ValidatePhoto<BookingPet>(photo?.Content, "anhThanhPham");
+        if (result is null)
         {
-            return new CareActionResult(
-                StatusCodes.Status403Forbidden,
-                Message: "Bạn không có quyền cập nhật trạng thái chăm sóc thú cưng.",
-                ErrorCode: "FORBIDDEN");
-        }
-
-        var validationErrors = ValidateCareActionRequest(chiTietDonId, request, photo);
-        if (validationErrors.Count > 0)
-        {
-            return new CareActionResult(
-                StatusCodes.Status400BadRequest,
-                Message: "Dữ liệu cập nhật chăm sóc không hợp lệ.",
-                ErrorCode: "VALIDATION_FAILED",
-                Errors: validationErrors);
-        }
-
-        string? photoExtension = null;
-        if (photo is not null)
-        {
-            if (photo.Length > MaxPhotoBytes)
+            var fingerprint = CareOperation.Fingerprint(new
             {
-                return new CareActionResult(
-                    StatusCodes.Status413PayloadTooLarge,
-                    Message: "Ảnh thành phẩm vượt quá dung lượng tối đa 5 MiB.",
-                    ErrorCode: "FILE_TOO_LARGE",
-                    Errors: [new ApiErrorItem { Field = "anhThanhPham", Message = "Kích thước ảnh tối đa 5 MiB." }]);
-            }
-
-            photoExtension = DetectImageExtension(photo.Content);
-            if (photoExtension is null)
-            {
-                return new CareActionResult(
-                    StatusCodes.Status415UnsupportedMediaType,
-                    Message: "Định dạng ảnh thành phẩm không được hỗ trợ (chỉ chấp nhận JPEG, PNG, WebP).",
-                    ErrorCode: "UNSUPPORTED_FILE",
-                    Errors: [new ApiErrorItem { Field = "anhThanhPham", Message = "Chỉ chấp nhận JPEG, PNG hoặc WebP." }]);
-            }
-        }
-
-        var fingerprint = ComputeCareActionFingerprint(chiTietDonId, request, photo);
-
-        var existingAudit = await dbContext.AuditLogSet
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a =>
-                a.ActorId == actorId &&
-                a.HanhDong == CareActionAuditAction &&
-                a.LoaiDoiTuong == AuditTargetType &&
-                a.DoiTuongId == chiTietDonId &&
-                a.RequestId == request.RequestId,
-                cancellationToken);
-
-        if (existingAudit is not null)
-        {
-            if (!string.Equals(existingAudit.Fingerprint, fingerprint, StringComparison.Ordinal))
-            {
-                return new CareActionResult(
-                    StatusCodes.Status409Conflict,
-                    Message: "RequestId đã được sử dụng với dữ liệu khác.",
-                    ErrorCode: "IDEMPOTENCY_CONFLICT");
-            }
-
-            if (!string.IsNullOrWhiteSpace(existingAudit.KetQua))
-            {
-                var cached = JsonSerializer.Deserialize<BookingPet>(existingAudit.KetQua, JsonOptions);
-                if (cached is not null)
-                {
-                    return new CareActionResult(StatusCodes.Status200OK, Data: cached, Message: "Cập nhật trạng thái chăm sóc thành công.");
-                }
-            }
-        }
-
-        var chiTietDon = await dbContext.ChiTietDonSet
-            .Include(c => c.DonDatLich)
-                .ThenInclude(d => d.KhungGio)
-            .Include(c => c.ThuCung)
-            .Include(c => c.NhanVien)
-            .Include(c => c.DichVuTrongDonChiTietDonItems)
-                .ThenInclude(dv => dv.DichVu)
-            .Include(c => c.DichVuTrongDonChiTietDonItems)
-                .ThenInclude(dv => dv.KhungGio)
-            .Include(c => c.DichVuTrongDonChiTietDonItems)
-                .ThenInclude(dv => dv.ThanhPhanDichVuTrongDonDichVuTrongDonItems)
-                    .ThenInclude(tp => tp.DichVu)
-            .Include(c => c.NhatKyChamSocChiTietDonItems)
-                .ThenInclude(nk => nk.NhanVien)
-            .FirstOrDefaultAsync(c => c.Id == chiTietDonId, cancellationToken);
-
-        if (chiTietDon is null)
-        {
-            return new CareActionResult(
-                StatusCodes.Status404NotFound,
-                Message: "Không tìm thấy thú cưng trong đơn đặt lịch.",
-                ErrorCode: "NOT_FOUND");
-        }
-
-        if (!await IsAuthorizedActorAsync(actor, chiTietDon, cancellationToken))
-        {
-            return new CareActionResult(
-                StatusCodes.Status403Forbidden,
-                Message: "Bạn không phải nhân viên được phân công hoặc không có ca làm việc APPROVED phù hợp.",
-                ErrorCode: "FORBIDDEN");
-        }
-
-        if (chiTietDon.DonDatLich.TrangThai != BookingState.IN_PROGRESS)
-        {
-            return new CareActionResult(
-                StatusCodes.Status409Conflict,
-                Message: "Đơn đặt lịch không ở trạng thái IN_PROGRESS để thực hiện chăm sóc.",
-                ErrorCode: "INVALID_TRANSITION");
-        }
-
-        var action = request.HanhDong!.Value;
-        var targetState = ResolveTargetCareState(chiTietDon.TrangThaiChamSoc, action);
-        if (!targetState.HasValue)
-        {
-            return new CareActionResult(
-                StatusCodes.Status409Conflict,
-                Message: $"Không thể thực hiện hành động {action} khi thú cưng đang ở trạng thái {chiTietDon.TrangThaiChamSoc}.",
-                ErrorCode: "INVALID_TRANSITION");
-        }
-
-        AuditLog? exceptionAudit = null;
-        if (action == CareActionType.READY)
-        {
-            var activeServices = chiTietDon.DichVuTrongDonChiTietDonItems
-                .Where(d => d.TrangThai != OrderServiceState.HUY)
-                .ToList();
-
-            var hasIncompleteCombo = activeServices.Any(d =>
-                (d.ComboId.HasValue || d.ThanhPhanDichVuTrongDonDichVuTrongDonItems.Count > 0) &&
-                (d.TrangThai == OrderServiceState.CHO_THUC_HIEN ||
-                 d.ThanhPhanDichVuTrongDonDichVuTrongDonItems.Any(tp => tp.TrangThai == OrderServiceState.CHO_THUC_HIEN)));
-
-            if (hasIncompleteCombo)
-            {
-                return new CareActionResult(
-                    StatusCodes.Status409Conflict,
-                    Message: "Dịch vụ combo chưa hoàn tất toàn bộ thành phần trước khi chuyển READY.",
-                    ErrorCode: "INVALID_TRANSITION");
-            }
-
-            if (photo is null)
-            {
-                if (!request.MaNgoaiLeAnh.HasValue)
-                {
-                    return new CareActionResult(
-                        StatusCodes.Status409Conflict,
-                        Message: "Cần ảnh thành phẩm hoặc ngoại lệ ảnh hợp lệ để chuyển sang READY.",
-                        ErrorCode: "INVALID_TRANSITION");
-                }
-
-                exceptionAudit = await dbContext.AuditLogSet
-                    .AsNoTracking()
-                    .FirstOrDefaultAsync(a =>
-                        a.Id == request.MaNgoaiLeAnh.Value &&
-                        a.HanhDong == PhotoExceptionAuditAction &&
-                        a.LoaiDoiTuong == AuditTargetType &&
-                        a.DoiTuongId == chiTietDonId,
-                        cancellationToken);
-
-                if (exceptionAudit is null)
-                {
-                    return new CareActionResult(
-                        StatusCodes.Status409Conflict,
-                        Message: "Mã ngoại lệ ảnh không tồn tại hoặc không thuộc thú cưng này.",
-                        ErrorCode: "INVALID_TRANSITION");
-                }
-            }
-        }
-
-        string? savedRelativePath = null;
-        if (photo is not null && photoExtension is not null)
-        {
-            savedRelativePath = await SavePhotoOutsideTransactionAsync(photo.Content, photoExtension, cancellationToken);
-        }
-
-        try
-        {
-            await using var transaction = dbContext.Database.IsRelational()
-                ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
-                : null;
-
-            var now = DateTimeOffset.UtcNow;
-
-            chiTietDon.TrangThaiChamSoc = targetState.Value;
-            chiTietDon.UpdatedAt = now;
-
-            if (action == CareActionType.READY)
-            {
-                chiTietDon.ReadyAt = now;
-
-                foreach (var service in chiTietDon.DichVuTrongDonChiTietDonItems
-                             .Where(d => d.TrangThai == OrderServiceState.CHO_THUC_HIEN && !d.ComboId.HasValue))
-                {
-                    service.TrangThai = OrderServiceState.HOAN_TAT;
-                    service.HoanTatAt = now;
-                    service.UpdatedAt = now;
-                }
-            }
-
-            var logNote = !string.IsNullOrWhiteSpace(request.GhiChu)
-                ? request.GhiChu.Trim()
-                : action == CareActionType.READY && exceptionAudit is not null
-                    ? (string.IsNullOrWhiteSpace(exceptionAudit.LyDo)
-                        ? "Hoàn tất chăm sóc (ngoại lệ ảnh được duyệt)"
-                        : exceptionAudit.LyDo)
-                    : null;
-
-            if (savedRelativePath is not null || !string.IsNullOrWhiteSpace(logNote))
-            {
-                var careLog = new NhatKyChamSoc
-                {
-                    ChiTietDonId = chiTietDon.Id,
-                    NhanVienId = actor.Id,
-                    LoaiNhatKy = $"CARE_{action}",
-                    GhiNhanAt = now,
-                    ObjectPath = savedRelativePath,
-                    GhiChu = logNote,
-                    CreatedAt = now,
-                    UpdatedAt = now,
-                    NhanVien = actor
-                };
-                dbContext.NhatKyChamSocSet.Add(careLog);
-            }
-
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            var responseDto = MapBookingPet(chiTietDon);
-
-            dbContext.AuditLogSet.Add(new AuditLog
-            {
-                ActorLoai = actor.VaiTro.ToString(),
-                ActorId = actor.Id,
-                HanhDong = CareActionAuditAction,
-                LoaiDoiTuong = AuditTargetType,
-                DoiTuongId = chiTietDon.Id,
-                TraceId = traceId,
-                RequestId = request.RequestId,
-                Fingerprint = fingerprint,
-                KetQua = JsonSerializer.Serialize(responseDto, JsonOptions),
-                CreatedAt = now
+                chiTietDonId,
+                request.RequestId,
+                request.HanhDong,
+                GhiChu = request.GhiChu?.Trim(),
+                request.MaNgoaiLeAnh,
+                PhotoFileName = photo?.FileName,
+                PhotoLength = photo?.Length,
+                PhotoHash = CareOperation.PhotoFingerprint(photo?.Content)
             });
-
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            if (transaction is not null)
-            {
-                await transaction.CommitAsync(cancellationToken);
-            }
-
-            return new CareActionResult(
-                StatusCodes.Status200OK,
-                Data: responseDto,
-                Message: "Cập nhật trạng thái chăm sóc thành công.");
+            var command = new CareCommand(chiTietDonId, actorId, request.RequestId, "CARE_UPDATE", "CARE_ACTION", traceId, fingerprint);
+            result = await operation.ExecuteAsync<BookingPet>(command, "Cập nhật trạng thái chăm sóc thành công.", photo?.Content,
+                (actor, now, path, preflight, ct) =>
+                    ApplyCareActionAsync(chiTietDonId, actor, request, photo is not null, now, path, preflight, ct),
+                cancellationToken);
         }
-        catch
-        {
-            if (savedRelativePath is not null)
-            {
-                DeletePhotoIfExists(savedRelativePath);
-            }
-            throw;
-        }
+
+        return new CareActionResult(result.StatusCode, result.Data, result.Message, result.ErrorCode, result.Errors);
     }
 
     public async Task<CareLogCreateResult> CreateCareLogAsync(
@@ -316,231 +57,168 @@ public class CareService(PetSpaDbContext dbContext, IWebHostEnvironment environm
         string traceId,
         CancellationToken cancellationToken = default)
     {
-        var actor = await dbContext.NhanVienSet
-            .Include(nv => nv.NhanVienQuyenNhanVienItems)
-            .FirstOrDefaultAsync(nv => nv.Id == actorId, cancellationToken);
+        var errors = ValidateCareLogRequest(chiTietDonId, request, photo);
+        if (errors.Count > 0)
+            return new CareLogCreateResult(400, Message: "Dữ liệu nhật ký chăm sóc không hợp lệ.",
+                ErrorCode: "VALIDATION_FAILED", Errors: errors);
 
-        if (actor is null || !actor.IsActive ||
-            !actor.NhanVienQuyenNhanVienItems.Any(q => q.MaQuyen == PhotoUploadPermission))
+        var result = CareOperation.ValidatePhoto<CareLog>(photo?.Content, "anh");
+        if (result is null)
         {
-            return new CareLogCreateResult(
-                StatusCodes.Status403Forbidden,
-                Message: "Bạn không có quyền ghi nhật ký chăm sóc và tải ảnh.",
-                ErrorCode: "FORBIDDEN");
-        }
-
-        var validationErrors = ValidateCareLogRequest(chiTietDonId, request, photo);
-        if (validationErrors.Count > 0)
-        {
-            return new CareLogCreateResult(
-                StatusCodes.Status400BadRequest,
-                Message: "Dữ liệu nhật ký chăm sóc không hợp lệ.",
-                ErrorCode: "VALIDATION_FAILED",
-                Errors: validationErrors);
-        }
-
-        string? photoExtension = null;
-        if (photo is not null)
-        {
-            if (photo.Length > MaxPhotoBytes)
+            var fingerprint = CareOperation.Fingerprint(new
             {
-                return new CareLogCreateResult(
-                    StatusCodes.Status413PayloadTooLarge,
-                    Message: "Ảnh nhật ký vượt quá dung lượng tối đa 5 MiB.",
-                    ErrorCode: "FILE_TOO_LARGE",
-                    Errors: [new ApiErrorItem { Field = "anh", Message = "Kích thước ảnh tối đa 5 MiB." }]);
-            }
-
-            photoExtension = DetectImageExtension(photo.Content);
-            if (photoExtension is null)
-            {
-                return new CareLogCreateResult(
-                    StatusCodes.Status415UnsupportedMediaType,
-                    Message: "Định dạng ảnh nhật ký không được hỗ trợ (chỉ chấp nhận JPEG, PNG, WebP).",
-                    ErrorCode: "UNSUPPORTED_FILE",
-                    Errors: [new ApiErrorItem { Field = "anh", Message = "Chỉ chấp nhận JPEG, PNG hoặc WebP." }]);
-            }
-        }
-
-        var fingerprint = ComputeCareLogFingerprint(chiTietDonId, request, photo);
-
-        var existingAudit = await dbContext.AuditLogSet
-            .AsNoTracking()
-            .FirstOrDefaultAsync(a =>
-                a.ActorId == actorId &&
-                a.HanhDong == CareLogAuditAction &&
-                a.LoaiDoiTuong == AuditTargetType &&
-                a.DoiTuongId == chiTietDonId &&
-                a.RequestId == request.RequestId,
-                cancellationToken);
-
-        if (existingAudit is not null)
-        {
-            if (!string.Equals(existingAudit.Fingerprint, fingerprint, StringComparison.Ordinal))
-            {
-                return new CareLogCreateResult(
-                    StatusCodes.Status409Conflict,
-                    Message: "RequestId đã được sử dụng với dữ liệu khác.",
-                    ErrorCode: "IDEMPOTENCY_CONFLICT");
-            }
-
-            if (!string.IsNullOrWhiteSpace(existingAudit.KetQua))
-            {
-                var cached = JsonSerializer.Deserialize<CareLog>(existingAudit.KetQua, JsonOptions);
-                if (cached is not null)
-                {
-                    return new CareLogCreateResult(StatusCodes.Status200OK, Data: cached, Message: "Ghi nhật ký chăm sóc thành công.");
-                }
-            }
-        }
-
-        var chiTietDon = await dbContext.ChiTietDonSet
-            .Include(c => c.DonDatLich)
-                .ThenInclude(d => d.KhungGio)
-            .Include(c => c.DichVuTrongDonChiTietDonItems)
-                .ThenInclude(dv => dv.KhungGio)
-            .FirstOrDefaultAsync(c => c.Id == chiTietDonId, cancellationToken);
-
-        if (chiTietDon is null)
-        {
-            return new CareLogCreateResult(
-                StatusCodes.Status404NotFound,
-                Message: "Không tìm thấy thú cưng trong đơn đặt lịch.",
-                ErrorCode: "NOT_FOUND");
-        }
-
-        if (!await IsAuthorizedActorAsync(actor, chiTietDon, cancellationToken))
-        {
-            return new CareLogCreateResult(
-                StatusCodes.Status403Forbidden,
-                Message: "Bạn không phải nhân viên được phân công hoặc không có ca làm việc APPROVED phù hợp.",
-                ErrorCode: "FORBIDDEN");
-        }
-
-        if (chiTietDon.TrangThaiChamSoc is not (
-                PetCareState.WAITING or
-                PetCareState.IN_PROGRESS or
-                PetCareState.PAUSED or
-                PetCareState.READY))
-        {
-            return new CareLogCreateResult(
-                StatusCodes.Status409Conflict,
-                Message: $"Không thể ghi nhật ký khi thú cưng đang ở trạng thái {chiTietDon.TrangThaiChamSoc}.",
-                ErrorCode: "INVALID_TRANSITION");
-        }
-
-        string? savedRelativePath = null;
-        if (photo is not null && photoExtension is not null)
-        {
-            savedRelativePath = await SavePhotoOutsideTransactionAsync(photo.Content, photoExtension, cancellationToken);
-        }
-
-        try
-        {
-            await using var transaction = dbContext.Database.IsRelational()
-                ? await dbContext.Database.BeginTransactionAsync(cancellationToken)
-                : null;
-
-            var now = DateTimeOffset.UtcNow;
-            var normalizedNote = string.IsNullOrWhiteSpace(request.GhiChu) ? null : request.GhiChu.Trim();
-
-            var careLog = new NhatKyChamSoc
-            {
-                ChiTietDonId = chiTietDon.Id,
-                NhanVienId = actor.Id,
-                LoaiNhatKy = "CARE_LOG",
-                GhiNhanAt = now,
-                ObjectPath = savedRelativePath,
-                GhiChu = normalizedNote,
-                CanNangGhiNhan = request.CanNangTheoDoi,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
-            dbContext.NhatKyChamSocSet.Add(careLog);
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            var responseDto = new CareLog
-            {
-                MaNhatKy = careLog.Id,
-                LoaiNhatKy = careLog.LoaiNhatKy,
-                GhiChu = careLog.GhiChu,
-                AnhUrl = string.IsNullOrWhiteSpace(careLog.ObjectPath) ? null : $"/storage/{careLog.ObjectPath}",
-                CanNangTheoDoi = careLog.CanNangGhiNhan,
-                TenTacGia = actor.TenNhanVien,
-                GhiNhanAt = careLog.GhiNhanAt
-            };
-
-            dbContext.AuditLogSet.Add(new AuditLog
-            {
-                ActorLoai = actor.VaiTro.ToString(),
-                ActorId = actor.Id,
-                HanhDong = CareLogAuditAction,
-                LoaiDoiTuong = AuditTargetType,
-                DoiTuongId = chiTietDon.Id,
-                TraceId = traceId,
-                RequestId = request.RequestId,
-                Fingerprint = fingerprint,
-                KetQua = JsonSerializer.Serialize(responseDto, JsonOptions),
-                CreatedAt = now
+                chiTietDonId,
+                request.RequestId,
+                GhiChu = request.GhiChu?.Trim(),
+                request.CanNangTheoDoi,
+                PhotoFileName = photo?.FileName,
+                PhotoLength = photo?.Length,
+                PhotoHash = CareOperation.PhotoFingerprint(photo?.Content)
             });
-
-            await dbContext.SaveChangesAsync(cancellationToken);
-
-            if (transaction is not null)
-            {
-                await transaction.CommitAsync(cancellationToken);
-            }
-
-            return new CareLogCreateResult(
-                StatusCodes.Status201Created,
-                Data: responseDto,
-                Message: "Ghi nhật ký chăm sóc thành công.");
+            var command = new CareCommand(chiTietDonId, actorId, request.RequestId, "PHOTO_UPLOAD", "CARE_LOG_CREATE", traceId, fingerprint);
+            result = await operation.ExecuteAsync<CareLog>(command, "Ghi nhật ký chăm sóc thành công.", photo?.Content,
+                (actor, now, path, preflight, ct) => WriteCareLogAsync(chiTietDonId, actor, request, now, path, preflight, ct),
+                cancellationToken);
         }
-        catch
-        {
-            if (savedRelativePath is not null)
-            {
-                DeletePhotoIfExists(savedRelativePath);
-            }
-            throw;
-        }
+
+        return new CareLogCreateResult(result.StatusCode, result.Data, result.Message, result.ErrorCode, result.Errors);
     }
 
-    private async Task<bool> IsAuthorizedActorAsync(
-        NhanVien actor,
-        ChiTietDon chiTietDon,
-        CancellationToken cancellationToken)
+    private async Task<CareResult<BookingPet>> ApplyCareActionAsync(
+        int petId, NhanVien actor, CareAction request, bool hasPhoto,
+        DateTimeOffset now, string? objectPath, bool preflight, CancellationToken cancellationToken)
     {
-        if (actor.VaiTro == Role.ADMIN)
+        var pet = await CareProjection.IncludeDetails(dbContext.ChiTietDonSet)
+            .Include(pet => pet.DonDatLich)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(pet => pet.Id == petId, cancellationToken);
+        if (pet is null)
+            return CareResult<BookingPet>.NotFound();
+
+        var (allowed, overrideReason) = await AuthorizeAssignmentAsync(actor, pet, now, cancellationToken);
+        if (!allowed)
+            return CareResult<BookingPet>.Forbidden();
+        if (pet.DonDatLich.TrangThai != BookingState.IN_PROGRESS)
+            return CareResult<BookingPet>.InvalidTransition("Đơn đặt lịch không ở trạng thái IN_PROGRESS để thực hiện chăm sóc.");
+
+        var action = request.HanhDong!.Value;
+        var targetState = ResolveTargetCareState(pet.TrangThaiChamSoc, action);
+        if (targetState is null)
+            return CareResult<BookingPet>.InvalidTransition(
+                $"Không thể thực hiện hành động {action} khi thú cưng đang ở trạng thái {pet.TrangThaiChamSoc}.");
+
+        AuditLog? photoException = null;
+        if (action == CareActionType.READY)
         {
-            return true;
+            var incompleteCombo = pet.DichVuTrongDonChiTietDonItems.Any(line => line.TrangThai != OrderServiceState.HUY &&
+                (line.ComboId.HasValue || line.ThanhPhanDichVuTrongDonDichVuTrongDonItems.Count > 0) &&
+                (line.TrangThai == OrderServiceState.CHO_THUC_HIEN ||
+                    line.ThanhPhanDichVuTrongDonDichVuTrongDonItems.Any(part => part.TrangThai == OrderServiceState.CHO_THUC_HIEN)));
+            if (incompleteCombo)
+                return CareResult<BookingPet>.InvalidTransition("Dịch vụ combo chưa hoàn tất toàn bộ thành phần trước khi chuyển READY.");
+
+            if (!hasPhoto)
+            {
+                photoException = await dbContext.AuditLogSet.AsNoTracking().SingleOrDefaultAsync(audit =>
+                    audit.Id == request.MaNgoaiLeAnh && audit.HanhDong == "PHOTO_EXCEPTION_APPROVE" &&
+                    audit.LoaiDoiTuong == "ChiTietDon" && audit.DoiTuongId == pet.Id && audit.ActorLoai == "ADMIN",
+                    cancellationToken);
+                if (photoException is null)
+                    return CareResult<BookingPet>.InvalidTransition("Cần ảnh thành phẩm hoặc ngoại lệ ảnh hợp lệ để chuyển sang READY.");
+            }
+        }
+        if (preflight)
+            return new CareResult<BookingPet>(200);
+
+        pet.TrangThaiChamSoc = targetState.Value;
+        pet.UpdatedAt = now;
+        if (action == CareActionType.READY)
+        {
+            pet.ReadyAt = now;
+            foreach (var line in pet.DichVuTrongDonChiTietDonItems.Where(line =>
+                         line.TrangThai == OrderServiceState.CHO_THUC_HIEN && !line.ComboId.HasValue))
+            {
+                line.TrangThai = OrderServiceState.HOAN_TAT;
+                line.HoanTatAt = now;
+                line.UpdatedAt = now;
+            }
         }
 
-        if (chiTietDon.NhanVienId != actor.Id)
-        {
-            return false;
-        }
+        if (action == CareActionType.START && objectPath is null)
+            objectPath = pet.NhatKyChamSocChiTietDonItems.Where(log => log.LoaiNhatKy == "CHECK_IN")
+                .OrderByDescending(log => log.GhiNhanAt).ThenByDescending(log => log.Id)
+                .Select(log => log.ObjectPath).FirstOrDefault();
 
-        var requiredShifts = chiTietDon.DichVuTrongDonChiTietDonItems
-            .Where(d => d.TrangThai != OrderServiceState.HUY)
-            .Select(d => (d.KhungGio.Ngay, d.KhungGio.CaLamViecId))
-            .Distinct()
-            .ToList();
+        var note = request.GhiChu?.Trim();
+        if (note is null && photoException is not null)
+            note = string.IsNullOrWhiteSpace(photoException.LyDo) ? "Hoàn tất chăm sóc (ngoại lệ ảnh được duyệt)" : photoException.LyDo;
+        if (objectPath is not null || note is not null)
+            dbContext.NhatKyChamSocSet.Add(NewLog(pet, actor, $"CARE_{action}", now, note, objectPath));
 
-        if (requiredShifts.Count == 0)
-        {
-            requiredShifts.Add((chiTietDon.DonDatLich.KhungGio.Ngay, chiTietDon.DonDatLich.KhungGio.CaLamViecId));
-        }
-
-        var approvedShifts = await dbContext.DangKyCaSet
-            .Where(dk => dk.NhanVienId == actor.Id && dk.TrangThai == ShiftRegistrationState.APPROVED)
-            .Select(dk => new { dk.Ngay, dk.CaLamViecId })
-            .ToListAsync(cancellationToken);
-
-        return requiredShifts.All(rs =>
-            approvedShifts.Any(ap => ap.Ngay == rs.Ngay && ap.CaLamViecId == rs.CaLamViecId));
+        await dbContext.SaveChangesAsync(cancellationToken);
+        return new CareResult<BookingPet>(200, CareProjection.Pet(pet, actor), AssigneeId: pet.NhanVienId,
+            OverrideReason: overrideReason, Action: action.ToString());
     }
+
+    private async Task<CareResult<CareLog>> WriteCareLogAsync(
+        int petId, NhanVien actor, CareLogCreate request, DateTimeOffset now, string? objectPath,
+        bool preflight, CancellationToken cancellationToken)
+    {
+        var pet = await dbContext.ChiTietDonSet.Include(pet => pet.DonDatLich)
+            .SingleOrDefaultAsync(pet => pet.Id == petId, cancellationToken);
+        if (pet is null)
+            return CareResult<CareLog>.NotFound();
+
+        var (allowed, overrideReason) = await AuthorizeAssignmentAsync(actor, pet, now, cancellationToken);
+        if (!allowed)
+            return CareResult<CareLog>.Forbidden();
+        if (pet.DonDatLich.TrangThai != BookingState.IN_PROGRESS ||
+            pet.TrangThaiChamSoc is not (PetCareState.WAITING or PetCareState.IN_PROGRESS or PetCareState.PAUSED or PetCareState.READY))
+            return CareResult<CareLog>.InvalidTransition($"Không thể ghi nhật ký khi thú cưng đang ở trạng thái {pet.TrangThaiChamSoc}.");
+        if (preflight)
+            return new CareResult<CareLog>(200);
+
+        var log = NewLog(pet, actor, "CARE_LOG", now, request.GhiChu?.Trim(), objectPath);
+        log.CanNangGhiNhan = request.CanNangTheoDoi;
+        dbContext.NhatKyChamSocSet.Add(log);
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return new CareResult<CareLog>(201, CareProjection.Log(log, actor),
+            AssigneeId: pet.NhanVienId, OverrideReason: overrideReason);
+    }
+
+    private async Task<(bool Allowed, string? OverrideReason)> AuthorizeAssignmentAsync(
+        NhanVien actor, ChiTietDon pet, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        var isAssigned = pet.NhanVienId == actor.Id;
+        var isAdmin = actor.VaiTro == Role.ADMIN;
+        if (!isAssigned && !isAdmin)
+            return (false, null);
+
+        var hasShift = await operation.HasCurrentShiftAsync(actor.Id, now, cancellationToken);
+        if (isAssigned && hasShift)
+            return (true, null);
+        if (!isAdmin)
+            return (false, null);
+
+        var reason = isAssigned ? "ADMIN_OVERRIDE_SHIFT"
+            : hasShift ? "ADMIN_OVERRIDE_ASSIGNMENT" : "ADMIN_OVERRIDE_ASSIGNMENT_AND_SHIFT";
+        return (true, reason);
+    }
+
+    private static NhatKyChamSoc NewLog(
+        ChiTietDon pet, NhanVien actor, string type, DateTimeOffset now, string? note, string? objectPath) =>
+        new()
+        {
+            ChiTietDonId = pet.Id,
+            NhanVienId = actor.Id,
+            LoaiNhatKy = type,
+            GhiNhanAt = now,
+            GhiChu = note,
+            ObjectPath = objectPath,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
 
     private static PetCareState? ResolveTargetCareState(PetCareState current, CareActionType action) =>
         (current, action) switch
@@ -644,176 +322,4 @@ public class CareService(PetSpaDbContext dbContext, IWebHostEnvironment environm
         return errors;
     }
 
-    private static string? DetectImageExtension(byte[] content)
-    {
-        if (content.Length >= 3 &&
-            content[0] == 0xFF && content[1] == 0xD8 && content[2] == 0xFF)
-        {
-            return ".jpg";
-        }
-
-        if (content.Length >= 8 &&
-            content[0] == 0x89 && content[1] == 0x50 && content[2] == 0x4E && content[3] == 0x47 &&
-            content[4] == 0x0D && content[5] == 0x0A && content[6] == 0x1A && content[7] == 0x0A)
-        {
-            return ".png";
-        }
-
-        if (content.Length >= 12 &&
-            content[0] == 0x52 && content[1] == 0x49 && content[2] == 0x46 && content[3] == 0x46 &&
-            content[8] == 0x57 && content[9] == 0x45 && content[10] == 0x42 && content[11] == 0x50)
-        {
-            return ".webp";
-        }
-
-        return null;
-    }
-
-    private string GetStorageFullPath(string relativePath)
-    {
-        var root = environment.IsEnvironment("Testing")
-            ? Path.Combine(Path.GetTempPath(), "petspa-test-storage")
-            : Path.Combine(environment.ContentRootPath, "storage");
-        return Path.Combine(root, relativePath);
-    }
-
-    private async Task<string> SavePhotoOutsideTransactionAsync(
-        byte[] content,
-        string extension,
-        CancellationToken cancellationToken)
-    {
-        var relativePath = Path.Combine("care-logs", $"{Guid.NewGuid():N}{extension}").Replace('\\', '/');
-        var fullPath = GetStorageFullPath(relativePath);
-        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
-        await File.WriteAllBytesAsync(fullPath, content, cancellationToken);
-        return relativePath;
-    }
-
-    private void DeletePhotoIfExists(string relativePath)
-    {
-        var fullPath = GetStorageFullPath(relativePath);
-        if (File.Exists(fullPath))
-        {
-            File.Delete(fullPath);
-        }
-    }
-
-    private static string ComputeCareActionFingerprint(
-        int chiTietDonId,
-        CareAction request,
-        CarePhotoInput? photo)
-    {
-        var photoHash = photo is null ? null : Convert.ToHexString(SHA256.HashData(photo.Content));
-        var canonical = JsonSerializer.Serialize(new
-        {
-            chiTietDonId,
-            request.RequestId,
-            request.HanhDong,
-            GhiChu = request.GhiChu?.Trim(),
-            request.MaNgoaiLeAnh,
-            PhotoFileName = photo?.FileName,
-            PhotoLength = photo?.Length,
-            PhotoHash = photoHash
-        });
-
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
-        return Convert.ToHexString(hash);
-    }
-
-    private static string ComputeCareLogFingerprint(
-        int chiTietDonId,
-        CareLogCreate request,
-        CarePhotoInput? photo)
-    {
-        var photoHash = photo is null ? null : Convert.ToHexString(SHA256.HashData(photo.Content));
-        var canonical = JsonSerializer.Serialize(new
-        {
-            chiTietDonId,
-            request.RequestId,
-            GhiChu = request.GhiChu?.Trim(),
-            request.CanNangTheoDoi,
-            PhotoFileName = photo?.FileName,
-            PhotoLength = photo?.Length,
-            PhotoHash = photoHash
-        });
-
-        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(canonical));
-        return Convert.ToHexString(hash);
-    }
-
-    private static List<string>? ParseFurConditions(string? rawJson)
-    {
-        if (string.IsNullOrWhiteSpace(rawJson))
-        {
-            return null;
-        }
-
-        try
-        {
-            return JsonSerializer.Deserialize<List<string>>(rawJson, JsonOptions);
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
-    private static BookingPet MapBookingPet(ChiTietDon entity)
-    {
-        return new BookingPet
-        {
-            MaChiTietDon = entity.Id,
-            MaThuCung = entity.ThuCungId,
-            TenThuCung = entity.TenPetSnapshot,
-            TrangThai = entity.TrangThaiChamSoc.ToString(),
-            CanNangChot = entity.CanNangChot,
-            SizeThucTe = entity.SizeThucTe?.ToString(),
-            SizeChot = entity.SizeChot?.ToString(),
-            TinhTrangLong = ParseFurConditions(entity.TinhTrangLong),
-            MaLoaiPhong = entity.LoaiPhongId,
-            TenNhanVienPhuTrach = entity.NhanVien?.TenNhanVien,
-            DichVu = entity.DichVuTrongDonChiTietDonItems
-                .OrderBy(d => d.Id)
-                .Select(d => new OrderService
-                {
-                    MaDichVuTrongDon = d.Id,
-                    MaDichVu = d.DichVuId,
-                    MaCombo = d.ComboId,
-                    MaKhungGio = d.KhungGioId,
-                    TenDichVu = d.TenSnapshot,
-                    TrangThai = d.TrangThai.ToString(),
-                    SizeChot = d.SizeChot?.ToString(),
-                    GiaChot = d.GiaChot,
-                    ThanhPhan = d.ThanhPhanDichVuTrongDonDichVuTrongDonItems
-                        .OrderBy(tp => tp.Id)
-                        .Select(tp => new Component
-                        {
-                            MaThanhPhan = tp.Id,
-                            MaDichVu = tp.DichVuId,
-                            TenDichVu = tp.DichVu.TenDichVu,
-                            TrangThai = tp.TrangThai.ToString(),
-                            HoanTatAt = tp.HoanTatAt
-                        })
-                        .ToList()
-                })
-                .ToList(),
-            NhatKy = entity.NhatKyChamSocChiTietDonItems
-                .OrderBy(nk => nk.GhiNhanAt)
-                .ThenBy(nk => nk.Id)
-                .Select(nk => new CareLog
-                {
-                    MaNhatKy = nk.Id,
-                    LoaiNhatKy = nk.LoaiNhatKy,
-                    GhiChu = nk.GhiChu,
-                    AnhUrl = string.IsNullOrWhiteSpace(nk.ObjectPath) ? null : $"/storage/{nk.ObjectPath}",
-                    CanNangTheoDoi = nk.CanNangGhiNhan,
-                    TenTacGia = nk.NhanVien?.TenNhanVien ?? string.Empty,
-                    GhiNhanAt = nk.GhiNhanAt
-                })
-                .ToList(),
-            NhanSom = entity.NhanSom,
-            BanGiaoAt = entity.BanGiaoAt,
-            TraLaiAt = entity.TraLaiAt
-        };
-    }
 }

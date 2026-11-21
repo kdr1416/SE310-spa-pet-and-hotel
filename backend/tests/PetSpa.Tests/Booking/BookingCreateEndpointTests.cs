@@ -82,6 +82,7 @@ public sealed class BookingCreateEndpointTests
         var policy = JsonNode.Parse((await persisted.DonDatLichSet.SingleAsync()).ChinhSachSnapshot)!;
         var pet = await persisted.ChiTietDonSet.SingleAsync();
         Assert.Equal(pet.Id, policy["thuCung"]![0]!["maChiTietDon"]!.GetValue<int>());
+        Assert.Equal("M", policy["thuCung"]![0]!["sizeCamKet"]!.GetValue<string>());
         Assert.Equal("test-1.jpg", policy["thuCung"]![0]!["vaccinationObjectPath"]!.GetValue<string>());
         Assert.Null(pet.HoSoTiemChungId);
         Assert.Null(pet.XacMinhTiemAt);
@@ -599,6 +600,9 @@ public sealed class BookingCreateEndpointTests
         public bool BookingWasCommitted { get; private set; }
         public Task? WaitFor { get; set; }
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task SendBookingConfirmedAsync(string recipient, string trackingCode, CancellationToken cancellationToken) =>
+            throw new InvalidOperationException("E04 must not send an approval email.");
 
         public async Task SendTrackingCodeAsync(string recipient, string trackingCode, CancellationToken cancellationToken)
         {
