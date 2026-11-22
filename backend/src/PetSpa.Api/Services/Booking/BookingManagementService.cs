@@ -54,7 +54,7 @@ public sealed class BookingManagementService(
             var page = await BookingProjection.IncludeDetails(matches)
                 .OrderByDescending(booking => booking.CreatedAt).ThenByDescending(booking => booking.Id)
                 .Skip((int)offset).Take(query.KichThuocTrang).ToListAsync(cancellationToken);
-            var items = page.Select(booking => BookingProjection.ProjectCurrent(booking, configuration)).ToList();
+            var items = page.Select(booking => BookingProjection.ProjectCurrent(booking, configuration, includeInternalDetails: true)).ToList();
             return ApiResponse<PageBooking>.Ok(new PageBooking(items, query.Trang, query.KichThuocTrang, total));
         }
         catch (NpgsqlException exception) when (exception.IsTransient)

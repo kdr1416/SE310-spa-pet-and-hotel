@@ -43,5 +43,5 @@ public sealed record TrackingResponse(
     decimal TongTamTinh,
     IReadOnlyList<BookingPet> ThuCung,
     InvoiceResponseDto? HoaDon,
-    object? TienCoc,
+    DepositDto? TienCoc,
     IReadOnlyList<string> HanhDongChoPhep);

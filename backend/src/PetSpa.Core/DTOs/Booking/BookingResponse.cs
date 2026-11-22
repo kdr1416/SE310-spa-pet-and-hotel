@@ -12,6 +12,6 @@ public sealed record BookingResponse(
     Contact LienHe,
     decimal TongTamTinh,
     IReadOnlyList<BookingPet> ThuCung,
-    object? TienCoc,
+    DepositDto? TienCoc,
     InvoiceResponseDto? HoaDon,
     string EmailDelivery);
