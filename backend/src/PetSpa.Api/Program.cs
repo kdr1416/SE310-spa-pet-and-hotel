@@ -21,6 +21,7 @@ using PetSpa.Api.Services.Storage;
 using PetSpa.Api.Services;
 using PetSpa.Core.Common;
 using PetSpa.Core.Interfaces.Care;
+using PetSpa.Core.Interfaces.Billing;
 using PetSpa.Core.Services;
 
 JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
@@ -89,6 +90,10 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
 builder.Services.AddScoped<SpaCapacityCalculator>();
+builder.Services.AddScoped<HotelCapacityCalculator>();
+builder.Services.AddScoped<IDepositExpiryService, DepositExpiryService>();
+builder.Services.AddScoped<IBillingSettlementHelper, BillingSettlementHelper>();
+builder.Services.AddHostedService<DepositExpiryBackgroundService>();
 builder.Services.AddScoped<BookingCreateService>();
 builder.Services.AddScoped<BookingProofService>();
 builder.Services.AddScoped<BookingManagementService>();

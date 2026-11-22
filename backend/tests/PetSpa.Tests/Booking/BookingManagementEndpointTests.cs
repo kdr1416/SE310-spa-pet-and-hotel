@@ -728,6 +728,12 @@ public sealed class BookingManagementEndpointTests
 
     private sealed class TestEmail(PostgresTestDatabase database) : IEmailSender
     {
+        public Task SendTrackingResendAsync(string recipient, string trackingCode, CancellationToken ct) =>
+            throw new InvalidOperationException("Sprint 1 does not send tracking resend emails.");
+        public Task SendRefundConfirmedAsync(string recipient, string trackingCode, int refundId, decimal amount,
+            DateTimeOffset refundedAt, CancellationToken ct) =>
+            throw new InvalidOperationException("Sprint 1 does not send refund emails.");
+
         public int ApprovalAttempts { get; private set; }
         public bool ConfirmedBeforeAttempt { get; private set; }
         public bool Fail { get; set; }

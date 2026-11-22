@@ -10,6 +10,19 @@
 - [docs/requirements/scope-and-decisions.md](../../requirements/scope-and-decisions.md) (`D07, D08, Q06, T02/T05/T08, M2-01, M2-02, M2-04, M2-05, M2-06, M2-07, M2-11`)
 - [backend/README.md](../../../backend/README.md) và [.github/CONTRIBUTING.md](../../../.github/CONTRIBUTING.md)
 
+## Handoff foundation Issue #14 (2026-11-22)
+
+Đọc [spec #14](../../superpowers/specs/2026-11-22-issue-14-sprint2-foundation-design.md) và [implementation plan](../../superpowers/plans/2026-11-22-issue-14-sprint2-foundation.md) trước khi consume foundation.
+
+- Writer chuẩn bị `slotIds`/`roomTypeIds` liên quan (mảng rỗng nếu không có), truyền named args `targetKhungGioIds`/`targetRoomTypeIds` khi gọi expiry. Dọn đủ hold quá hạn tại cutoff qua nhiều batch nếu cần, tối đa 20 booking mỗi transaction. Cả hai filters null là global sweep dành worker; filter explicit rỗng là no-op. Hai tập IDs dùng OR.
+- Cleanup commit độc lập trước transaction chính. Nếu hold khác vừa hết hạn trong lúc writer chờ lock, thả/rollback transaction chính rồi dọn với cutoff mới; không khóa slot/room rồi quay lại khóa booking khác. Sau cleanup nạp lại entity/counters; không dùng graph cũ đang track như dữ liệu mới.
+- `now >= HetHanAt` là hết hạn. E42 giữ booking → slots → rooms → deposit trước `ExpireLockedBookingDepositAsync`, không SaveChanges/transaction lồng trong helper. Nếu receipt đến sau HET_HAN, E42 vẫn ghi nhận và bổ sung CHO_HOAN cho phần mới thu chưa dành hoàn dưới cùng booking lock, không hồi sinh reservation.
+- Hủy toàn bộ pet qua E47 giữ `LoaiHuy == null`, không tự phạt toàn đơn. Nhánh trước check-in (PENDING/CONFIRMED, thực tế mọi CheckInAt null) có thể CANCELLED khi không còn invoice UNPAID dù vẫn còn xử lý hoàn; nhánh M2-05 đang IN_PROGRESS vẫn chờ quyết toán/hoàn/trả đủ. Caller cập nhật pet state trước terminal helper; settlement tính target theo nightsStayed dù state pet đổi trước hay sau lời gọi.
+- Hotel tính theo từng đêm: pet chưa check-in bị hủy nhả toàn bộ; đã check-in chưa trả vẫn giữ khoảng cam kết; đã trả chỉ nhả đêm chưa dùng, vẫn tính đêm đã ở khi booking còn active. DONE sớm không tự nhả phòng. Booking terminal không còn giữ phòng.
+- Booking/Tracking dùng `DepositDto?`. Public mặc định refund.thamChieu=null; internal chỉ thấy tham chiếu đã che. Nạp đủ graph dưới transaction của use case; calculator đường đọc không tạo write-lock.
+- Foundation helper không bị giới hạn số dòng. Ước lượng #14 là 16–24 giờ tập trung, không phải cam kết hoàn tất sáng Ngày 1; lịch các làn phụ thuộc phải tính lại theo thời điểm gate #14 thực sự đạt. Đo SLA <500ms, không suy ra SLA từ batch size.
+
+
 ---
 
 ## 0. Điều Kiện Bắt Đầu & Quy Tắc Bắt Buộc
@@ -58,7 +71,7 @@
 1. **`E42` (`POST /api/internal/deposits/{id}/receipts`):**
    - Quyền `DEPOSIT_CONFIRM`. Đọc `AsNoTracking()` lấy `DonDatLichId` từ `tien_coc.id == id` (không có trả `404`), mở transaction khóa `don_dat_lich` $\rightarrow$ `khung_gio_dat_lich` $\rightarrow$ `loai_phong` $\rightarrow$ `tien_coc`.
    - Idempotency theo `(actorId, "DEPOSIT_CONFIRM", request.RequestId)` (replay trả `200 OK`) và chống trùng `(NganHang, MaGiaoDich)` (`M2-L05`).
-   - Kiểm tra quá hạn 30 phút dưới khóa (`M2-11` / `M2-L06`): nếu `deposit.TrangThaiYeuCau == CHO_THU && now > deposit.HetHanAt`, gọi `await depositExpiry.ExpireLockedBookingDepositAsync(booking, now, ct)` trong cùng transaction (chuyển đơn `CANCELLED`, cọc `HET_HAN`, `GiuLai = 0`, nhả slot/phòng).
+   - Kiểm tra quá hạn 30 phút dưới khóa (`M2-11` / `M2-L06`): nếu `deposit.TrangThaiYeuCau == CHO_THU && now >= deposit.HetHanAt`, gọi `await depositExpiry.ExpireLockedBookingDepositAsync(booking, now, ct)` trong cùng transaction (chuyển đơn `CANCELLED`, cọc `HET_HAN`, `GiuLai = 0`, nhả slot/phòng).
    - Nếu `deposit.TrangThaiYeuCau is HET_HAN or HUY` (tiền đến muộn): **vẫn lưu `GiaoDichThu`** (`SoTien = request.SoTien`, `XacNhanBoiId = actorId`) và tự tạo `HoanCoc` (`CHO_HOAN`, `SoTien = thucNhan - danhHoan` gom luôn khoản nộp thiếu trước hạn nếu có, `TaoBoiId = actorId`), trả `201 Created` (`DepositDto`).
    - Nếu `CHO_THU` trong hạn: lưu `GiaoDichThu`; nếu tổng `thucNhan >= deposit.SoTienYeuCau` thì chuyển `TrangThaiYeuCau = DA_DAP_UNG`, `KetThucAt = now` (nộp thiếu giữ nguyên `CHO_THU` và không gia hạn `HetHanAt`).
 2. **`E43` (`GET /api/internal/deposits`):** Quyền `DEPOSIT_CONFIRM`, phân trang `BookingQuery` (`kichThuocTrang <= 100`, lọc ngày và `TrangThaiYeuCau`), trả `PageDeposit`.
@@ -101,7 +114,7 @@
 
 ### Chi tiết nghiệp vụ & Guard cần cài đặt
 1. **`E20` (`POST /api/internal/booking-pets/{id}/extra-services`):**
-   - Trước khi mở transaction chính, gọi `await depositExpiry.ExpireOverdueDepositsAsync(clock.GetUtcNow(), null, ct)`.
+   - Trước khi mở transaction chính, gọi `await depositExpiry.ExpireOverdueDepositsAsync(clock.GetUtcNow(), null, ct, targetKhungGioIds: slotIds, targetRoomTypeIds: roomTypeIds)`.
    - Khóa `don_dat_lich` $\rightarrow$ `khung_gio_dat_lich` (`request.MaKhungGio`) $\rightarrow$ `dang_ky_ca`. Idempotency theo `(actorId, "EXTRA_SERVICE_CREATE", request.RequestId)` (replay trả `200`).
    - Guard: Đơn chưa có hóa đơn hiệu lực, pet đang ở `WAITING`, `IN_PROGRESS`, hoặc `PAUSED` (có `SizeChot != null`, chặn `READY`/`DONE`/`CANCELLED`/`NOT_ARRIVED`), XOR `MaDichVu` hoặc `MaCombo` (dịch vụ lẻ không được là `Cắt tỉa tạo kiểu` / `SPA_ADVANCED`), ca `MaKhungGio` hợp lệ trong khoảng ngày phục vụ của đơn.
    - Kiểm tra công suất qua `SpaCapacityCalculator`: `PetsDemand = 0` nếu pet đã có dịch vụ trong cùng `MaKhungGio`, ngược lại `1`; `MinutesDemand` = thời lượng dịch vụ/combo. Không đủ trả `409 CAPACITY_EXCEEDED`.

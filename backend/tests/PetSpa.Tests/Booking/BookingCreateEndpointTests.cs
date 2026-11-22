@@ -594,6 +594,12 @@ public sealed class BookingCreateEndpointTests
 
     private sealed class RecordingEmail(PostgresTestDatabase database) : IEmailSender
     {
+        public Task SendTrackingResendAsync(string recipient, string trackingCode, CancellationToken ct) =>
+            throw new InvalidOperationException("Sprint 1 does not send tracking resend emails.");
+        public Task SendRefundConfirmedAsync(string recipient, string trackingCode, int refundId, decimal amount,
+            DateTimeOffset refundedAt, CancellationToken ct) =>
+            throw new InvalidOperationException("Sprint 1 does not send refund emails.");
+
         private int _attempts;
         public int Attempts => _attempts;
         public bool Fail { get; set; }

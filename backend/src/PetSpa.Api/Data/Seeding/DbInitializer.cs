@@ -127,6 +127,39 @@ public static class DbInitializer
                     DonGia = sample.Prices[(int)size.MaSize] });
         }
         await context.SaveChangesAsync(cancellationToken);
+        await SeedRoomAndComboAsync(context, sizes, cancellationToken);
+    }
+
+    private static async Task SeedRoomAndComboAsync(PetSpaDbContext context, List<HeSoCanNang> sizes,
+        CancellationToken cancellationToken)
+    {
+        foreach (var (name, price, capacity) in new[]
+        {
+            ("Phòng Tiêu Chuẩn", 250000m, 5), ("Phòng VIP", 450000m, 3)
+        })
+        {
+            if (!await context.LoaiPhongSet.AnyAsync(x => x.TenPhong == name, cancellationToken))
+                context.LoaiPhongSet.Add(new LoaiPhong { TenPhong = name, GiaMoiDem = price, SoLuongPhong = capacity, IsActive = true });
+        }
+        var combo = await context.ComboSet.SingleOrDefaultAsync(x => x.TenCombo == "Combo Tắm Cắt Toàn Diện", cancellationToken);
+        if (combo is null)
+        {
+            combo = new Combo { TenCombo = "Combo Tắm Cắt Toàn Diện", IsActive = true };
+            context.ComboSet.Add(combo);
+            await context.SaveChangesAsync(cancellationToken);
+        }
+        var componentIds = await context.DichVuSet.Where(x => x.TenDichVu == "Tắm sấy vệ sinh" || x.TenDichVu == "Cắt tỉa tạo kiểu")
+            .Select(x => x.Id).ToListAsync(cancellationToken);
+        var existingComponents = await context.ChiTietComboSet.Where(x => x.ComboId == combo.Id)
+            .Select(x => x.DichVuId).ToListAsync(cancellationToken);
+        foreach (var id in componentIds.Where(id => !existingComponents.Contains(id)))
+            context.ChiTietComboSet.Add(new ChiTietCombo { ComboId = combo.Id, DichVuId = id });
+        var pricedSizes = await context.BangGiaSizeSet.Where(x => x.ComboId == combo.Id)
+            .Select(x => x.SizeId).ToListAsync(cancellationToken);
+        decimal[] prices = [350000m, 480000m, 620000m, 800000m];
+        foreach (var size in sizes.Where(x => !pricedSizes.Contains(x.Id)))
+            context.BangGiaSizeSet.Add(new BangGiaSize { ComboId = combo.Id, SizeId = size.Id, DonGia = prices[(int)size.MaSize] });
+        await context.SaveChangesAsync(cancellationToken);
     }
 
     private static async Task SeedScheduleAsync(PetSpaDbContext context, NhanVien admin, NhanVien care,

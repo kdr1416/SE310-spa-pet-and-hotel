@@ -14,6 +14,58 @@ namespace PetSpa.Tests.Seeding;
 public class SeedDataTests
 {
     [Fact]
+    public async Task Seed_RoomsAndCombo_HaveExactCapacityPricesAndLinks()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        using var host = SeedApplicationFactory.Create(database.ConnectionString, SeedApplicationFactory.NewPassword());
+        _ = host.Services;
+        await using var db = database.CreateContext();
+        var rooms = await db.LoaiPhongSet.OrderBy(x => x.GiaMoiDem).ToArrayAsync();
+        Assert.Equal(new[] { "Phòng Tiêu Chuẩn", "Phòng VIP" }, rooms.Select(x => x.TenPhong));
+        Assert.Equal(new decimal[] { 250000, 450000 }, rooms.Select(x => x.GiaMoiDem));
+        Assert.Equal(new[] { 5, 3 }, rooms.Select(x => x.SoLuongPhong));
+        var combo = await db.ComboSet.Include(x => x.ChiTietComboComboItems).ThenInclude(x => x.DichVu)
+            .Include(x => x.BangGiaSizeComboItems).ThenInclude(x => x.KhoangSize).SingleAsync();
+        Assert.Equal("Combo Tắm Cắt Toàn Diện", combo.TenCombo);
+        Assert.Equal(new[] { "Cắt tỉa tạo kiểu", "Tắm sấy vệ sinh" }, combo.ChiTietComboComboItems.Select(x => x.DichVu.TenDichVu).Order());
+        Assert.Equal(new decimal[] { 350000, 480000, 620000, 800000 }, combo.BangGiaSizeComboItems.OrderBy(x => x.KhoangSize.MaSize).Select(x => x.DonGia));
+    }
+
+    [Fact]
+    public async Task Seed_RepairsMissingComboPriceWithoutResettingUserChanges()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        using (var first = SeedApplicationFactory.Create(database.ConnectionString, SeedApplicationFactory.NewPassword()))
+            _ = first.Services;
+        await using (var db = database.CreateContext())
+        {
+            var room = await db.LoaiPhongSet.SingleAsync(x => x.TenPhong == "Phòng VIP");
+            room.GiaMoiDem = 460000;
+            room.SoLuongPhong = 2;
+            var prices = await db.BangGiaSizeSet.Where(x => x.ComboId != null).OrderBy(x => x.Id).ToArrayAsync();
+            prices[0].DonGia = 360000;
+            db.Remove(prices[^1]);
+            db.Remove(await db.ChiTietComboSet.FirstAsync());
+            (await db.CauHinhHeThongSet.SingleAsync(x => x.Khoa == "EXTENSION_SETTINGS")).GiaTri = "{\"otpEmail\":false,\"cocHotel\":true,\"giuCho\":true}";
+            await db.SaveChangesAsync();
+        }
+        using (var second = SeedApplicationFactory.Create(database.ConnectionString, SeedApplicationFactory.NewPassword()))
+            _ = second.Services;
+        using (var third = SeedApplicationFactory.Create(database.ConnectionString, SeedApplicationFactory.NewPassword()))
+            _ = third.Services;
+        await using var verify = database.CreateContext();
+        Assert.Equal(16, await verify.BangGiaSizeSet.CountAsync());
+        Assert.Equal(2, await verify.ChiTietComboSet.CountAsync());
+        Assert.Equal(1, await verify.ComboSet.CountAsync());
+        var vip = await verify.LoaiPhongSet.SingleAsync(x => x.TenPhong == "Phòng VIP");
+        Assert.Equal(460000m, vip.GiaMoiDem);
+        Assert.Equal(2, vip.SoLuongPhong);
+        Assert.Equal(360000m, (await verify.BangGiaSizeSet.Where(x => x.ComboId != null).OrderBy(x => x.Id).FirstAsync()).DonGia);
+        using var settings = JsonDocument.Parse((await verify.CauHinhHeThongSet.SingleAsync(x => x.Khoa == "EXTENSION_SETTINGS")).GiaTri);
+        Assert.True(settings.RootElement.GetProperty("cocHotel").GetBoolean());
+    }
+
+    [Fact]
     public async Task ConcurrentSeeds_CommitOneSetOfData_WithoutUniqueKeyConflicts()
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
@@ -36,7 +88,7 @@ public class SeedDataTests
         Assert.Equal(3, await verify.NhanVienSet.CountAsync());
         Assert.Equal(4, await verify.HeSoCanNangSet.CountAsync());
         Assert.Equal(3, await verify.DichVuSet.CountAsync());
-        Assert.Equal(12, await verify.BangGiaSizeSet.CountAsync());
+        Assert.Equal(16, await verify.BangGiaSizeSet.CountAsync());
         Assert.Equal(24, await verify.QuyenSet.CountAsync());
         Assert.Equal(39, await verify.NhanVienQuyenSet.CountAsync());
         Assert.Equal(2, await verify.KhungGioDatLichSet.CountAsync());
@@ -126,7 +178,7 @@ public class SeedDataTests
         Assert.Equal(4, await verify.HeSoCanNangSet.CountAsync());
         Assert.Equal(3, await verify.NhanVienSet.CountAsync());
         Assert.Equal(3, await verify.DichVuSet.CountAsync());
-        Assert.Equal(12, await verify.BangGiaSizeSet.CountAsync());
+        Assert.Equal(16, await verify.BangGiaSizeSet.CountAsync());
         Assert.Equal(2, await verify.CaLamViecSet.CountAsync());
         Assert.Equal(2, await verify.KhungGioDatLichSet.CountAsync());
         Assert.Equal(2, await verify.DangKyCaSet.CountAsync());
@@ -216,7 +268,7 @@ public class SeedDataTests
         Assert.Equal(new decimal[] { 0, 5, 15, 25 }, sizes.Select(s => s.CanNangTu));
         Assert.Equal(new decimal?[] { 5, 15, 25, null }, sizes.Select(s => s.CanNangDen));
         Assert.Equal(3, await context.DichVuSet.CountAsync());
-        Assert.Equal(12, await context.BangGiaSizeSet.CountAsync());
+        Assert.Equal(16, await context.BangGiaSizeSet.CountAsync());
         var bath = await context.DichVuSet.SingleAsync(s => s.TenDichVu == "Tắm sấy vệ sinh");
         Assert.Equal(new decimal[] { 150000, 200000, 250000, 300000 },
             await context.BangGiaSizeSet.Where(p => p.DichVuId == bath.Id)
