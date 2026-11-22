@@ -10,6 +10,19 @@
 - [docs/requirements/scope-and-decisions.md](../../requirements/scope-and-decisions.md) (`D04, D05, D06, D07, D10, D13, D14, D15, D16, D17, D19, Q01, Q05, M2-01, M2-06, M2-11, M2-13`)
 - [backend/README.md](../../../backend/README.md) và [.github/CONTRIBUTING.md](../../../.github/CONTRIBUTING.md)
 
+## Handoff foundation Issue #14 (2026-11-22)
+
+Đọc [spec #14](../../superpowers/specs/2026-11-22-issue-14-sprint2-foundation-design.md) và [implementation plan](../../superpowers/plans/2026-11-22-issue-14-sprint2-foundation.md) trước khi consume foundation.
+
+- Writer chuẩn bị `slotIds`/`roomTypeIds` liên quan (mảng rỗng nếu không có), truyền named args `targetKhungGioIds`/`targetRoomTypeIds` khi gọi expiry. Dọn đủ hold quá hạn tại cutoff qua nhiều batch nếu cần, tối đa 20 booking mỗi transaction. Cả hai filters null là global sweep dành worker; filter explicit rỗng là no-op. Hai tập IDs dùng OR.
+- Cleanup commit độc lập trước transaction chính. Nếu hold khác vừa hết hạn trong lúc writer chờ lock, thả/rollback transaction chính rồi dọn với cutoff mới; không khóa slot/room rồi quay lại khóa booking khác. Sau cleanup nạp lại entity/counters; không dùng graph cũ đang track như dữ liệu mới.
+- `now >= HetHanAt` là hết hạn. E42 giữ booking → slots → rooms → deposit trước `ExpireLockedBookingDepositAsync`, không SaveChanges/transaction lồng trong helper. Nếu receipt đến sau HET_HAN, E42 vẫn ghi nhận và bổ sung CHO_HOAN cho phần mới thu chưa dành hoàn dưới cùng booking lock, không hồi sinh reservation.
+- Hủy toàn bộ pet qua E47 giữ `LoaiHuy == null`, không tự phạt toàn đơn. Nhánh trước check-in (PENDING/CONFIRMED, thực tế mọi CheckInAt null) có thể CANCELLED khi không còn invoice UNPAID dù vẫn còn xử lý hoàn; nhánh M2-05 đang IN_PROGRESS vẫn chờ quyết toán/hoàn/trả đủ. Caller cập nhật pet state trước terminal helper; settlement tính target theo nightsStayed dù state pet đổi trước hay sau lời gọi.
+- Hotel tính theo từng đêm: pet chưa check-in bị hủy nhả toàn bộ; đã check-in chưa trả vẫn giữ khoảng cam kết; đã trả chỉ nhả đêm chưa dùng, vẫn tính đêm đã ở khi booking còn active. DONE sớm không tự nhả phòng. Booking terminal không còn giữ phòng.
+- Booking/Tracking dùng `DepositDto?`. Public mặc định refund.thamChieu=null; internal chỉ thấy tham chiếu đã che. Nạp đủ graph dưới transaction của use case; calculator đường đọc không tạo write-lock.
+- Foundation helper không bị giới hạn số dòng. Ước lượng #14 là 16–24 giờ tập trung, không phải cam kết hoàn tất sáng Ngày 1; lịch các làn phụ thuộc phải tính lại theo thời điểm gate #14 thực sự đạt. Đo SLA <500ms, không suy ra SLA từ batch size.
+
+
 ---
 
 ## 0. Điều Kiện Bắt Đầu & Quy Tắc Bắt Buộc
@@ -64,7 +77,7 @@
    - Pet Hotel-only (`DichVu` rỗng) không tốn slot Spa (`0` slot, `0` phút), nhưng `intake.Ngay` và `NgayTra` không được rơi vào `NgayNghi` (`D17`, đêm ở giữa được đi qua ngày nghỉ).
    - Điền mảng `AvailabilityResponse.Phong` cho từng đêm $d \in [\text{intake.Ngay}, \text{NgayTra})$; nếu thiếu phòng bất kỳ đêm nào trả `409 CAPACITY_EXCEEDED`.
 3. **Mở rộng `E04` & Thêm `E05` (`BookingCreateService` & `BookingCreateController` — Đường Ghi):**
-   - Trước khi mở transaction chính, gọi `await depositExpiry.ExpireOverdueDepositsAsync(clock.GetUtcNow(), null, ct)` (transaction riêng) để giải phóng `SlotDaDat`/`PhutDaGiu` vật lý của đơn `PENDING` quá hạn cọc.
+   - Trước khi mở transaction chính, gọi `await depositExpiry.ExpireOverdueDepositsAsync(clock.GetUtcNow(), null, ct, targetKhungGioIds: slotIds, targetRoomTypeIds: roomTypeIds)` (transaction riêng) để giải phóng `SlotDaDat`/`PhutDaGiu` vật lý của đơn `PENDING` quá hạn cọc.
    - Nhận `multipart/form-data` (JSON `"payload"` + files khớp `pet.VaccinationFileKey`) hoặc `application/json`.
    - `E05` kiểm tra JWT + quyền `BOOKING_CREATE` trong DB, gán `DonDatLich.TaoBoiId = actorId`, cho phép chọn `maKhachHang` & `maThuCung` cũ (xác minh `thu_cung.khach_hang_id == maKhachHang`) mà không cần `bookingProof`/`petProof`.
    - Trong transaction chính: khóa `request_id` advisory lock $\rightarrow$ `khung_gio_dat_lich` $\rightarrow$ `loai_phong` $\rightarrow$ `dang_ky_ca`.
@@ -146,7 +159,7 @@
      - Hủy hợp lệ $\ge 2$h (`E09`, `E12`) hoặc `STAFF_REJECTED`: tự động tạo `HoanCoc` (`CHO_HOAN`) cho `ThucNhan - DanhHoan`. **Bắt buộc gán `TaoBoiId = actorId ?? booking.DuyetBoiId ?? latestReceipt.XacNhanBoiId ?? booking.TaoBoiId!.Value`** để không lỗi PostgreSQL FK `23503` khi `E09` không có `actorId`!
      - Hủy muộn `< 2h` hoặc `NO_SHOW` (với cọc đã `DA_DAP_UNG`): phạt giữ cọc (`GiuLai = ThucNhan - DanhHoan`, không tạo `HoanCoc`).
 4. **`E13` (`POST /api/internal/bookings/{id}/reschedule`):**
-   - Kiểm tra `BOOKING_RESCHEDULE` + idempotency. Gọi `depositExpiry.ExpireOverdueDepositsAsync(now, null, ct)` trước khi mở transaction chính.
+   - Kiểm tra `BOOKING_RESCHEDULE` + idempotency. Gọi `depositExpiry.ExpireOverdueDepositsAsync(now, null, ct, targetKhungGioIds: slotIds, targetRoomTypeIds: roomTypeIds)` trước khi mở transaction chính.
    - Guard (`D14`): chỉ `PENDING`/`CONFIRMED` và chưa có pet nào check-in; kiểm tra quy tắc `NgayTra` như Task 2.
    - Khóa hợp nhất `don_dat_lich` $\rightarrow$ `khung_gio_dat_lich` (cũ + mới tăng dần) $\rightarrow$ `loai_phong` $\rightarrow$ `dang_ky_ca` mới. Kiểm tra công suất (truyền `excludeBookingId: booking.Id`). Lỗi rollback giữ nguyên lịch cũ (`409 CAPACITY_EXCEEDED`); hợp lệ thì chuyển slot/phút và cập nhật lịch/số đêm (giữ nguyên `TienCoc` đã phát hành).
 5. **`E50` (`POST /api/tracking/resend`):**

@@ -93,6 +93,7 @@ builder.Services.AddScoped<SpaCapacityCalculator>();
 builder.Services.AddScoped<HotelCapacityCalculator>();
 builder.Services.AddScoped<IDepositExpiryService, DepositExpiryService>();
 builder.Services.AddScoped<IBillingSettlementHelper, BillingSettlementHelper>();
+builder.Services.AddHostedService<DepositExpiryBackgroundService>();
 builder.Services.AddScoped<BookingCreateService>();
 builder.Services.AddScoped<BookingProofService>();
 builder.Services.AddScoped<BookingManagementService>();

@@ -1,7 +1,7 @@
 # Spec triển khai Issue #14 — Foundation Sprint 2
 
 - **Ngày:** 2026-11-22.
-- **Trạng thái:** Đủ cơ sở lập implementation plan theo xác nhận của Tech Lead ngày 2026-11-22; chưa cho phép triển khai code.
+- **Trạng thái:** Được Tech Lead cho phép triển khai Native ngày 2026-11-22; đang kiểm chứng implementation, chưa chứng nhận CI/merge.
 - **Owner:** Tech Lead; Dev A/B/C review; tối thiểu hai thành viên khác Approve trước merge.
 - **Delivery:** một gói foundation hoàn chỉnh trong một PR, chia thành các bước kiểm chứng nhỏ.
 - **Branch khi triển khai:** `feat/issue-14-sprint2-foundation`.

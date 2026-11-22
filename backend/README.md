@@ -86,7 +86,7 @@ Seeder nằm ở `src/PetSpa.Api/Data/Seeding/DbInitializer.cs`. Mặc định t
 
 Chỉ cho phép môi trường `Development` hoặc `Testing`; bật seed ở `Production`/`Staging` sẽ dừng khởi động trước khi truy cập database. Dùng database phát triển riêng đã có schema; seeder **không** gọi `Migrate`/`EnsureCreated`. Seed ghi dữ liệu vào database được cấu hình, vì vậy hãy kiểm tra đúng database trước khi bật.
 
-Seed gồm 4 khoảng size, 2 ca, 3 dịch vụ và 12 giá, 3 tài khoản hash bằng ASP.NET Core `PasswordHasher<NhanVien>`, 24 permissions cùng grants FR01, slot/đăng ký ca cho ngày chọn và cấu hình `EXTENSION_SETTINGS` với `otpEmail`, `cocHotel`, `giuCho` đều `false`. Login ở Issue #5 cần dùng cùng cơ chế verify hash. Các lựa chọn dữ liệu mẫu chưa được kế hoạch chỉ định chi tiết: dịch vụ thứ ba là **Vệ sinh tai**, 30 phút, giá S/M/L/XL lần lượt 50/70/90/110 nghìn VND; key nội bộ cho nhóm cờ là `EXTENSION_SETTINGS`. Đây là dữ liệu phát triển, không phải quyết định giá vận hành thật. Dịch vụ cắt tỉa vẫn không được mua riêng theo contract nghiệp vụ.
+Seed gồm 4 khoảng size, 2 ca, 3 dịch vụ, 1 combo đủ 4 size, 2 loại phòng và tổng 16 giá, 3 tài khoản hash bằng ASP.NET Core `PasswordHasher<NhanVien>`, 24 permissions cùng grants FR01, slot/đăng ký ca cho ngày chọn và cấu hình `EXTENSION_SETTINGS` với `otpEmail`, `cocHotel`, `giuCho` đều `false`. Login ở Issue #5 cần dùng cùng cơ chế verify hash. Các lựa chọn dữ liệu mẫu chưa được kế hoạch chỉ định chi tiết: dịch vụ thứ ba là **Vệ sinh tai**, 30 phút, giá S/M/L/XL lần lượt 50/70/90/110 nghìn VND; key nội bộ cho nhóm cờ là `EXTENSION_SETTINGS`. Đây là dữ liệu phát triển, không phải quyết định giá vận hành thật. Dịch vụ cắt tỉa vẫn không được mua riêng theo contract nghiệp vụ.
 
 Mỗi lần chạy dùng một transaction và advisory lock PostgreSQL; chỉ thêm bản ghi thiếu theo username, mã size/permission, tên dịch vụ/ca và các khóa liên quan. Không đổi mật khẩu, giá, cờ cấu hình, reservation hoặc quyết định duyệt ca đã có. Xung đột role/tài khoản bị khóa thì dừng và rollback thay vì reset account. Chạy lại sẽ khôi phục cả grant seed bị xóa; không dùng seeder để quản trị quyền thực tế. Không sửa Entity, DbContext hoặc migration để seed.
 
@@ -111,3 +111,29 @@ CI backend dùng PostgreSQL 17 tạm của GitHub Actions và đặt biến này
 ## E12 Đánh dấu khách vắng mặt
 
 Khi chọn `loaiHuy` là `NO_SHOW`, nhân viên xác nhận khách chưa liên hệ bằng cách nhập `lyDo` là `Khách không liên hệ`. Có thể bắt đầu bằng `Khách không liên hệ:` rồi thêm chi tiết. API so khớp không phân biệt chữ hoa và chữ thường, lưu đầy đủ lý do vào audit. Thiếu xác nhận trả `409 INVALID_TRANSITION`, giữ nguyên lịch hẹn và công suất.
+
+## Foundation Sprint 2 — Issue #14
+
+Shared DTOs và typed Deposit/Refund projection tuân thủ API contract. Hotel capacity tính từng đêm; Spa read compensation dùng cutoff để bỏ phần giữ cọc hết hạn mà không ghi database. Các endpoint Hotel/Combo/Cọc vẫn do #15–#24 nối foundation; #14 không tự gỡ guards nghiệp vụ Sprint 1.
+
+Expiry writer truyền IDs ca/loại phòng cần đặt qua optional target arguments, dọn đủ hold liên quan theo batch tối đa 20 booking/transaction và commit trước transaction chính. Hai filters null là sweep toàn cục; explicit empty filters là no-op. Service cleanup dùng DbContext riêng cùng options, không commit/detach thay đổi của caller. `ExpireLockedBookingDepositAsync` dùng context/transaction caller, yêu cầu đã khóa và nạp graph đầy đủ; caller SaveChanges/commit.
+
+| Key | Ý nghĩa |
+|---|---|
+| `DepositExpiry:BackgroundEnabled` | Mặc định false trong Testing, true môi trường khác; explicit config ưu tiên. |
+| `DepositExpiry:IntervalSeconds` | Mặc định 30 giây; số dương trong giới hạn timer. Không quyết định hiệu lực reservation. |
+| `Smtp:Host`, `Smtp:Port`, `Smtp:From` | Host/cổng/địa chỉ gửi của MailKit5; cấu hình ngoài source khi có dữ liệu vận hành. |
+| `Smtp:EnableSsl` | Mặc định true: 465 TLS ngay, 587 STARTTLS bắt buộc; cổng TLS khác fail config. False chỉ dùng cho SMTP local/test được cấu hình chủ động. |
+| `Smtp:Username`, `Smtp:Password` | Credential qua environment/user secrets; không ghi vào Git/log. Không có username thì không authenticate. |
+
+Email adapter có timeout8 giây và cancellation; gửi sau commit theo semantics SENT/FAILED hiện tại. SMTP sau commit thất bại không rollback booking. SMTP tests dùng loopback port động, không email thật. Seed mới thêm Phòng Tiêu Chuẩn250k/5 suất, VIP450k/3 suất và Combo Tắm Cắt Toàn Diện350k/480k/620k/800k; chạy lại chỉ bổ sung phần thiếu. EXTENSION_SETTINGS mặc định vẫn ba cờ false.
+
+Chạy với PETSPA_TEST_POSTGRES đã cấu hình trỏ PostgreSQL loopback riêng, không Neon:
+
+```powershell
+dotnet build backend/PetSpa.sln -m:1
+dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~Foundation|FullyQualifiedName~SeedDataTests" -m:1
+dotnet test backend/PetSpa.sln -m:1
+```
+
+Tham chiếu [spec #14](../docs/superpowers/specs/2026-11-22-issue-14-sprint2-foundation-design.md) và [implementation plan](../docs/superpowers/plans/2026-11-22-issue-14-sprint2-foundation.md). Build yêu cầu0 warnings/errors. Số đo local chỉ phục vụ đánh giá; không thay nghiệm thu NFR hoặc CI/review của nhóm.

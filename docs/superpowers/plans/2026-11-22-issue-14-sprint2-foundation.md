@@ -63,7 +63,7 @@ Test files tạo dưới `backend/tests/PetSpa.Tests/Foundation/`, namespace `Pe
 - Produces: chính xác danh mục C# ở spec mục 4.1. `DepositDto` gồm `int MaTienCoc/MaDon`, state string, `decimal CoSoTinh/TyLe/SoTienYeuCau/ThucNhan/KhauTru/GiuLai/DanhHoan/DaHoan`, `DateTimeOffset HetHanAt`, `IReadOnlyList<RefundDto> HoanCoc`. `RefundDto` có `DateTimeOffset? HoanAt` và `string? ThamChieu`; page records có `Items/Trang/KichThuocTrang/TongSo`.
 - Request types dùng `init`, explicit required presence cho scalar bắt buộc, DataAnnotations + `IValidatableObject` cho Guid.Empty/cross-field validation. JSON enum dạng string đúng whitelist; không nhận số thay enum.
 
-- [ ] **Step 1 — Viết tests contract/validation.** Parameterize toàn bộ request/response trong spec 4.1 bằng JSON hợp lệ theo dictionary; assert field names, date/instant, pages và nullable response. Tests riêng: `OptionalField_AbsentAccepted_ExplicitNullRejected`, `Patch_RejectsUnknownFieldsAndNoBusinessChanges`, `Money_RejectsFractionalVndAndNonPositiveReceipts`, `RequestId_RejectsEmptyGuid`, `ExtraService_RejectsBothOrNeitherServiceAndCombo`, `ScheduleQuery_ValidatesDateOrderButDefersAdminPermissionToHandler`. Optional khác null kiểm tra qua deserialize; các range/cross-field kiểm tra qua validator sau deserialize. Assertion snippets trên DTO đã arrange:
+- [x] **Step 1 — Viết tests contract/validation.** Parameterize toàn bộ request/response trong spec 4.1 bằng JSON hợp lệ theo dictionary; assert field names, date/instant, pages và nullable response. Tests riêng: `OptionalField_AbsentAccepted_ExplicitNullRejected`, `Patch_RejectsUnknownFieldsAndNoBusinessChanges`, `Money_RejectsFractionalVndAndNonPositiveReceipts`, `RequestId_RejectsEmptyGuid`, `ExtraService_RejectsBothOrNeitherServiceAndCombo`, `ScheduleQuery_ValidatesDateOrderButDefersAdminPermissionToHandler`. Optional khác null kiểm tra qua deserialize; các range/cross-field kiểm tra qua validator sau deserialize. Assertion snippets trên DTO đã arrange:
 
 ```csharp
 Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<PetEdit>("{\"requestId\":\"9de41cc1-c2b9-41a6-875c-99a29cd5cecb\",\"tenThuCung\":null}", options));
@@ -71,10 +71,10 @@ Assert.Throws<JsonException>(() => JsonSerializer.Deserialize<FeeEdit>("{\"actor
 Assert.Equal(20, new BookingQuery().KichThuocTrang);
 ```
 
-- [ ] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~SharedDtoContractTests" -m:1`. Expected: thiếu DTO hoặc assertion cho behavior mới thất bại, không phải lỗi môi trường.
-- [ ] **Step 3 — Implement đúng types/schema.** Request scalar bắt buộc dùng `[JsonRequired]`; optional có backing field/init setter từ chối null khi field xuất hiện, mặc định bỏ qua vẫn hợp lệ; không đổi global JSON options. PATCH dùng `JsonUnmappedMemberHandling.Disallow`. Required strings có `[Required]` và giới hạn đúng contract. Không duplicate `BookingQuery` hoặc tự thêm permission check vào DTO.
-- [ ] **Step 4 — Chạy xanh:** lệnh Step 2, rồi `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~CoreEnvelopeTests" -m:1`. Expected: PASS và JSON contract cũ giữ nguyên.
-- [ ] **Step 5 — Commit:** stage bốn DTO files và test; `git commit -m "feat(foundation): add Sprint 2 shared contract DTOs"`.
+- [x] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~SharedDtoContractTests" -m:1`. Expected: thiếu DTO hoặc assertion cho behavior mới thất bại, không phải lỗi môi trường.
+- [x] **Step 3 — Implement đúng types/schema.** Request scalar bắt buộc dùng `[JsonRequired]`; optional có backing field/init setter từ chối null khi field xuất hiện, mặc định bỏ qua vẫn hợp lệ; không đổi global JSON options. PATCH dùng `JsonUnmappedMemberHandling.Disallow`. Required strings có `[Required]` và giới hạn đúng contract. Không duplicate `BookingQuery` hoặc tự thêm permission check vào DTO.
+- [x] **Step 4 — Chạy xanh:** lệnh Step 2, rồi `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~CoreEnvelopeTests" -m:1`. Expected: PASS và JSON contract cũ giữ nguyên.
+- [x] **Step 5 — Commit:** stage bốn DTO files và test; `git commit -m "feat(foundation): add Sprint 2 shared contract DTOs"`.
 
 ## Task 2: Typed cọc, accounting và projection an toàn
 
@@ -88,7 +88,7 @@ Assert.Equal(20, new BookingQuery().KichThuocTrang);
 - `DepositAccounting.Calculate(DonDatLich booking)` internal static, trả internal record `DepositAmounts(decimal ThucNhan, decimal KhauTru, decimal GiuLai, decimal DanhHoan, decimal DaHoan)`. Không query DB/DI; Task 6 reuse. Không biến computed amounts thành cột entity.
 - Test fixture sở hữu một `PostgresTestDatabase` và host `PostgresWebApplicationFactory`; tạo bằng `FoundationTestSupport.CreateAsync(DateTimeOffset now)`, trả `FoundationFixture : IAsyncDisposable` có `Database`, `Host`, `Clock`. JWT/SMTP/storage dùng test doubles theo conventions hiện có, không đọc credentials.
 
-- [ ] **Step 1 — Viết tests.** `Projection_SumsReceiptsAndBothRefundStates_ExcludesRevokedInvoice`: receipts 400k+200k, active khấu trừ 300k, revoked 500k, refunds 100k CHO_HOAN+50k DA_HOAN → thucNhan 600k, khauTru 300k, danhHoan 150k, daHoan 50k. `Penalty_RequiresWholeBookingCancellation_AndNeverAppliesToExpiry`: đúng 2h →0; 1h59m59s → số dư; STAFF_REJECTED/HET_HAN/LoaiHuy null/đã check-in →0. `MultipleActiveInvoices_FailsAsInvariantViolation`: không chọn ngẫu nhiên một invoice. `InternalThenPublicProjection_DoesNotMutateRawReference` (RF04), tham chiếu test tổng hợp `BANK-12345678`:
+- [x] **Step 1 — Viết tests.** `Projection_SumsReceiptsAndBothRefundStates_ExcludesRevokedInvoice`: receipts 400k+200k, active khấu trừ 300k, revoked 500k, refunds 100k CHO_HOAN+50k DA_HOAN → thucNhan 600k, khauTru 300k, danhHoan 150k, daHoan 50k. `Penalty_RequiresWholeBookingCancellation_AndNeverAppliesToExpiry`: đúng 2h →0; 1h59m59s → số dư; STAFF_REJECTED/HET_HAN/LoaiHuy null/đã check-in →0. `MultipleActiveInvoices_FailsAsInvariantViolation`: không chọn ngẫu nhiên một invoice. `InternalThenPublicProjection_DoesNotMutateRawReference` (RF04), tham chiếu test tổng hợp `BANK-12345678`:
 
 ```csharp
 var internalView = BookingProjection.Project(booking, includeInternalDetails: true);
@@ -100,10 +100,10 @@ Assert.Equal("BANK-12345678", booking.TienCocDonDatLich!.HoanCocTienCocItems.Sin
 
 Thêm cases reference null/rỗng/≤4 ký tự/ký tự không ASCII và `BookingWithoutDeposit_StillReturnsNull`. Fixture PostgreSQL seed trực tiếp cọc/receipt/refund, gọi HTTP E08 bằng cặp tracking hợp lệ và E10a với JWT để chứng minh IncludeDetails nạp đủ, response không có `bangChungPath`. `Sprint1CreationSnapshot_ReplaysWithNullDeposit_AndNoSecondEmail` dùng E04 replay hiện có, không tạo endpoint mới.
 
-- [ ] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BookingDepositProjectionTests" -m:1`. Expected: projection còn null hoặc chưa có flag/new accounting.
-- [ ] **Step 3 — Implement projection/accounting.** Nạp cọc→receipts/refunds và phí, giữ split queries; reject nhiều invoice hiệu lực bằng `InvalidOperationException` trước tính tiền. Dùng entities đầy đủ, không dựa vào invoice DTO caller truyền để tính khấu trừ. Mask theo spec 4.3; default false truyền từ `ProjectCurrent`, E08/creation/replay vẫn false. Internal list có thể truyền true cho deposit projection nhưng giữ invoice Public-safe hiện hữu; không mở thêm trường invoice/ghi chú. Không sửa snapshot lịch sử khi replay.
-- [ ] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BookingCreateEndpointTests|FullyQualifiedName~BookingManagementEndpointTests" -m:1`. Expected: PASS, replay không gửi mail lại.
-- [ ] **Step 5 — Commit:** stage files Task 2; `git commit -m "feat(foundation): project typed deposits with safe references"`.
+- [x] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BookingDepositProjectionTests" -m:1`. Expected: projection còn null hoặc chưa có flag/new accounting.
+- [x] **Step 3 — Implement projection/accounting.** Nạp cọc→receipts/refunds và phí, giữ split queries; reject nhiều invoice hiệu lực bằng `InvalidOperationException` trước tính tiền. Dùng entities đầy đủ, không dựa vào invoice DTO caller truyền để tính khấu trừ. Mask theo spec 4.3; default false truyền từ `ProjectCurrent`, E08/creation/replay vẫn false. Internal list có thể truyền true cho deposit projection nhưng giữ invoice Public-safe hiện hữu; không mở thêm trường invoice/ghi chú. Không sửa snapshot lịch sử khi replay.
+- [x] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BookingCreateEndpointTests|FullyQualifiedName~BookingManagementEndpointTests" -m:1`. Expected: PASS, replay không gửi mail lại.
+- [x] **Step 5 — Commit:** stage files Task 2; `git commit -m "feat(foundation): project typed deposits with safe references"`.
 
 ## Task 3: Seed Room/Combo idempotent
 
@@ -113,7 +113,7 @@ Thêm cases reference null/rỗng/≤4 ký tự/ký tự không ASCII và `Booki
 
 **Interfaces:** giữ `DbInitializer.InitializeAsync(PetSpaDbContext context, SeedDataOptions options, IHostEnvironment environment, CancellationToken cancellationToken = default)`; bổ sung seed trong transaction/advisory lock có sẵn, không tạo service mới.
 
-- [ ] **Step 1 — Viết tests.** Đổi ba assert count giá 12→16 ở fixture sạch; `Seed_RoomsAndCombo_HaveExactCapacityPricesAndLinks`, `Seed_RepeatedOrConcurrentRun_DoesNotDuplicate`, `Seed_RepairsMissingComboPriceWithoutResettingUserChanges`. Phòng Tiêu Chuẩn=250000/5, VIP=450000/3; combo Tắm Cắt Toàn Diện liên kết đúng hai dịch vụ Tắm sấy vệ sinh/Cắt tỉa tạo kiểu, size S/M/L/XL=350000/480000/620000/800000. Assert phần sửa giá/capacity và extension bật sẵn không bị reset:
+- [x] **Step 1 — Viết tests.** Đổi ba assert count giá 12→16 ở fixture sạch; `Seed_RoomsAndCombo_HaveExactCapacityPricesAndLinks`, `Seed_RepeatedOrConcurrentRun_DoesNotDuplicate`, `Seed_RepairsMissingComboPriceWithoutResettingUserChanges`. Phòng Tiêu Chuẩn=250000/5, VIP=450000/3; combo Tắm Cắt Toàn Diện liên kết đúng hai dịch vụ Tắm sấy vệ sinh/Cắt tỉa tạo kiểu, size S/M/L/XL=350000/480000/620000/800000. Assert phần sửa giá/capacity và extension bật sẵn không bị reset:
 
 ```csharp
 Assert.Equal(16, await verify.BangGiaSizeSet.CountAsync());
@@ -121,10 +121,10 @@ Assert.Equal(2, await verify.LoaiPhongSet.CountAsync());
 Assert.Equal(1, await verify.ComboSet.CountAsync());
 ```
 
-- [ ] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~SeedDataTests" -m:1`; expected count hiện tại 12 thay vì 16.
-- [ ] **Step 3 — Implement seed.** Lookup theo tên/convention, links theo FK, giá theo combo+size; thêm phần thiếu, không hardcode ID hay overwrite row hiện hữu. Giữ môi trường Development/Testing và EXTENSION_SETTINGS false khi chưa tồn tại.
-- [ ] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~CatalogSeedTests|FullyQualifiedName~CatalogEndpointTests" -m:1`. Expected PASS; catalog fixture tự seed riêng không bị thay count chỉ để phù hợp global seed.
-- [ ] **Step 5 — Commit:** hai files; `git commit -m "feat(seed): add hotel rooms and complete spa combo"`.
+- [x] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~SeedDataTests" -m:1`; expected count hiện tại 12 thay vì 16.
+- [x] **Step 3 — Implement seed.** Lookup theo tên/convention, links theo FK, giá theo combo+size; thêm phần thiếu, không hardcode ID hay overwrite row hiện hữu. Giữ môi trường Development/Testing và EXTENSION_SETTINGS false khi chưa tồn tại.
+- [x] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~CatalogSeedTests|FullyQualifiedName~CatalogEndpointTests" -m:1`. Expected PASS; catalog fixture tự seed riêng không bị thay count chỉ để phù hợp global seed.
+- [x] **Step 5 — Commit:** hai files; `git commit -m "feat(seed): add hotel rooms and complete spa combo"`.
 
 ## Task 4: Công suất Hotel và bù Spa khi đọc
 
@@ -137,7 +137,7 @@ Assert.Equal(1, await verify.ComboSet.CountAsync());
 - `Task LockRoomTypesAsync(int[] roomTypeIds, CancellationToken ct)` trên cùng calculator; yêu cầu current transaction.
 - `SpaCapacityCalculator.CheckAsync(IReadOnlyCollection<SpaSlotDemand> demands, CancellationToken cancellationToken, DateTimeOffset? readAsOfNow = null)` giữ return `Task<IReadOnlyDictionary<int, SpaSlotCapacity>>`.
 
-- [ ] **Step 1 — Viết tests PostgreSQL.** `Hotel_CountsDistinctPetsPerNight_WithExcludedBooking`; `Hotel_EarlyDoneKeepsCommittedNights`; `Hotel_CancelledPetReturnedAfterOneOfThreeNights_ReleasesOnlyUnusedNights` (RF05); `Hotel_CancelledBeforeCheckin_ReleasesAllNights`; `Hotel_CancelledAfterCheckinNotReturned_KeepsOriginalInterval`; `Hotel_TerminalBookingDoesNotHoldRooms`. Fixture active IN_PROGRESS có pet ở 1/3 đêm đã trả, capacity phòng=5:
+- [x] **Step 1 — Viết tests PostgreSQL.** `Hotel_CountsDistinctPetsPerNight_WithExcludedBooking`; `Hotel_EarlyDoneKeepsCommittedNights`; `Hotel_CancelledPetReturnedAfterOneOfThreeNights_ReleasesOnlyUnusedNights` (RF05); `Hotel_CancelledBeforeCheckin_ReleasesAllNights`; `Hotel_CancelledAfterCheckinNotReturned_KeepsOriginalInterval`; `Hotel_TerminalBookingDoesNotHoldRooms`. Fixture active IN_PROGRESS có pet ở 1/3 đêm đã trả, capacity phòng=5:
 
 ```csharp
 var result = await hotel.CheckRoomAvailabilityAsync(day, day.AddDays(3), [roomId], null, now, ct);
@@ -146,10 +146,10 @@ Assert.Equal(new[] { 4, 5, 5 }, result.Select(x => x.SuatConLai));
 
 `ExpiredHold_BeforeAtAfterDeadline_IsExcludedOnlyWhenDue`: tại deadline−1 tick vẫn giữ, đúng deadline/qua deadline bỏ khi CHO_THU; DA_DAP_UNG hoặc không có cọc vẫn giữ. `Spa_ReadCompensation_CountsPetOnceAndComboMinutesOnce`: một pet có hai dòng 60+90 phút cùng ca, counters=1/150 → read effective 0/0 khi hết hạn; default writer vẫn thấy 1/150. Pet Hotel-only không làm đổi counters. So database trước/sau calculator để chứng minh không ghi. Giữ tests ca đóng/nghỉ/không staffing/nhân viên inactive/thiếu quyền. Input invalid ngày ném `ArgumentException`, IDs rỗng trả empty; SQL lock IDs đảo/trùng phải đi tăng dần, gọi ngoài transaction thất bại.
 
-- [ ] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~Foundation.CapacityTests" -m:1`. Expected thiếu Hotel calculator hoặc chưa bù expiry.
-- [ ] **Step 3 — Implement calculators.** Query chỉ đọc; group pet/đêm, Spa distinct `(pet,slot)` và sum duration cha đúng một lần; business timezone Asia/Ho_Chi_Minh. Canceled room theo từng đêm như spec/AC03, không bỏ luôn lịch sử đã ở. LockRoomTypes query tham số hóa `ANY` + `ORDER BY id FOR UPDATE`. Không nối E03 cutoff hoặc gỡ Hotel/Combo guards trong task này.
-- [ ] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~AvailabilityEndpointTests|FullyQualifiedName~BookingCreateEndpointTests" -m:1`. Expected PASS, lời gọi Spa cũ vẫn compile/chạy.
-- [ ] **Step 5 — Commit:** files Task 4; `git commit -m "feat(capacity): add hotel capacity and expired spa hold reads"`.
+- [x] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~Foundation.CapacityTests" -m:1`. Expected thiếu Hotel calculator hoặc chưa bù expiry.
+- [x] **Step 3 — Implement calculators.** Query chỉ đọc; group pet/đêm, Spa distinct `(pet,slot)` và sum duration cha đúng một lần; business timezone Asia/Ho_Chi_Minh. Canceled room theo từng đêm như spec/AC03, không bỏ luôn lịch sử đã ở. LockRoomTypes query tham số hóa `ANY` + `ORDER BY id FOR UPDATE`. Không nối E03 cutoff hoặc gỡ Hotel/Combo guards trong task này.
+- [x] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~AvailabilityEndpointTests|FullyQualifiedName~BookingCreateEndpointTests" -m:1`. Expected PASS, lời gọi Spa cũ vẫn compile/chạy.
+- [x] **Step 5 — Commit:** files Task 4; `git commit -m "feat(capacity): add hotel capacity and expired spa hold reads"`.
 
 ## Task 5: Expiry targeted, lock ordering và hoàn phần đã thu
 
@@ -162,7 +162,7 @@ Assert.Equal(new[] { 4, 5, 5 }, result.Select(x => x.SuatConLai));
 - `Task ExpireLockedBookingDepositAsync(DonDatLich booking, DateTimeOffset now, CancellationToken ct)`.
 - Consumes: DbContext, TimeProvider, Hotel lock helper, `BookingRowLock.AcquireAsync(PetSpaDbContext db, int bookingId, CancellationToken cancellationToken)` và accounting ở Task 2. Không inject singleton context.
 
-- [ ] **Step 1 — Viết tests state/transaction.** `Expiry_AtDeadline_CancelsBookingAndReleasesSpaOnce`; `Expiry_PartialReceipts_ReservesFullOutstandingRefundWithLatestActor`; `Expiry_NoReceipt_CreatesNoRefund`; `LockedExpiry_DoesNotCommitAndRollsBackWithCaller`; `Sweep_RejectsAmbientOrCurrentTransaction`; `Sweep_TargetBooking_DoesNotTouchAnotherBooking`. Receipt 80k+20k, refunds đã dành 30k → tạo thêm 70k, actor từ `XacNhanAt DESC, Id DESC`; replay không tạo lần hai. Assert state CANCELLED/NO_SHOW/HET_HAN, timestamp cutoff hợp lệ, giuLai=0 và Spa counters giảm đúng; Hotel-only không giảm Spa.
+- [x] **Step 1 — Viết tests state/transaction.** `Expiry_AtDeadline_CancelsBookingAndReleasesSpaOnce`; `Expiry_PartialReceipts_ReservesFullOutstandingRefundWithLatestActor`; `Expiry_NoReceipt_CreatesNoRefund`; `LockedExpiry_DoesNotCommitAndRollsBackWithCaller`; `Sweep_RejectsAmbientOrCurrentTransaction`; `Sweep_TargetBooking_DoesNotTouchAnotherBooking`. Receipt 80k+20k, refunds đã dành 30k → tạo thêm 70k, actor từ `XacNhanAt DESC, Id DESC`; replay không tạo lần hai. Assert state CANCELLED/NO_SHOW/HET_HAN, timestamp cutoff hợp lệ, giuLai=0 và Spa counters giảm đúng; Hotel-only không giảm Spa.
 
 ```csharp
 Assert.Equal(BookingState.CANCELLED, booking.TrangThai);
@@ -171,11 +171,11 @@ Assert.Equal(70000m, newlyCreatedRefund.SoTien);
 Assert.Equal(RefundState.CHO_HOAN, newlyCreatedRefund.TrangThai);
 ```
 
-- [ ] **Step 2 — Viết tests batch/concurrency.** `TargetedSweep_DrainsTwentyOneRelatedBookings_LeavesUnrelatedBooking` (RF01): 21 liên quan + 1 ngoài scope; count=21, đơn ngoài scope vẫn PENDING. Đo transaction/SQL bằng test interceptor để assert không batch nào khóa >20 booking; không chỉ assert count tổng. `TargetedSweep_EmptyFiltersAreNoOp_CombinedFiltersUseOr_RejectsMixedBookingAndResourceScope`; global all-null quét hết. `ConcurrentSweeps_ReleaseAndRefundExactlyOnce`: hai context cùng booking, tổng count chuyển=1, counters/refund không double. `ConfirmedWhileExpiryWaits_IsRecheckedAfterLock`: bên thắng đã đáp ứng trước hạn không bị expiry hủy. `ReceiptConfirmationWaitingPastDeadline_CannotKeepReservation` (RF02): mô phỏng confirmer dưới booking lock, fake clock tiến đúng deadline sau khi bị chặn; dùng locked expiry và hoàn delta sau receipt, không đổi về DA_DAP_UNG. `WriterProtocol_NewHoldExpiresWhileWaiting_ReleasesLocksThenCleansAgain`: fixture mô phỏng rollback main transaction, cleanup cutoff mới rồi mới reserve; HTTP wiring để consumer làm. `CleanupCommit_SurvivesNextWriterRollback`: cleanup đã commit không hồi sinh do transaction sau rollback.
-- [ ] **Step 3 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~DepositExpiryTests|FullyQualifiedName~DepositExpiryConcurrencyTests" -m:1`. Expected thiếu service hoặc assertion state/batch/concurrency thất bại.
-- [ ] **Step 4 — Implement service.** Candidates AsNoTracking tại cutoff, filter OR theo active Spa slot/room type, keyset theo booking ID; mỗi batch lock toàn bộ booking trước union slots/rooms/deposits. Recheck/load fresh sau lock, giờ server không sớm hơn cutoff. Không mutate tracked graph lấy trước lock; không clear tracker làm mất thay đổi unrelated của caller. Candidate không còn đủ guard bỏ qua, không lặp vô hạn. Current/ambient transaction và mixed scope sai ném `InvalidOperationException`/`ArgumentException` phù hợp; IDs không dương ném `ArgumentException`. Entry point chỉ mutate graph dưới current transaction, không SaveChanges. Invalid counters/receipt actor làm rollback batch, không clamp che sai dữ liệu. Save/commit từng batch, trả count thực chuyển; đã commit batch trước không rollback vì batch sau lỗi.
-- [ ] **Step 5 — Chạy xanh:** lệnh Step 3; rồi filter `Foundation.CapacityTests` để xác minh read compensation không double-trừ sau cleanup. Expected PASS; timeout test được xem là fail, không bỏ qua.
-- [ ] **Step 6 — Commit:** files Task 5; `git commit -m "feat(deposits): expire targeted holds safely in bounded transactions"`.
+- [x] **Step 2 — Viết tests batch/concurrency.** `TargetedSweep_DrainsTwentyOneRelatedBookings_LeavesUnrelatedBooking` (RF01): 21 liên quan + 1 ngoài scope; count=21, đơn ngoài scope vẫn PENDING. Đo transaction/SQL bằng test interceptor để assert không batch nào khóa >20 booking; không chỉ assert count tổng. `TargetedSweep_EmptyFiltersAreNoOp_CombinedFiltersUseOr_RejectsMixedBookingAndResourceScope`; global all-null quét hết. `ConcurrentSweeps_ReleaseAndRefundExactlyOnce`: hai context cùng booking, tổng count chuyển=1, counters/refund không double. `ConfirmedWhileExpiryWaits_IsRecheckedAfterLock`: bên thắng đã đáp ứng trước hạn không bị expiry hủy. `ReceiptConfirmationWaitingPastDeadline_CannotKeepReservation` (RF02): mô phỏng confirmer dưới booking lock, fake clock tiến đúng deadline sau khi bị chặn; dùng locked expiry và hoàn delta sau receipt, không đổi về DA_DAP_UNG. `WriterProtocol_NewHoldExpiresWhileWaiting_ReleasesLocksThenCleansAgain`: fixture mô phỏng rollback main transaction, cleanup cutoff mới rồi mới reserve; HTTP wiring để consumer làm. `CleanupCommit_SurvivesNextWriterRollback`: cleanup đã commit không hồi sinh do transaction sau rollback.
+- [x] **Step 3 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~DepositExpiryTests|FullyQualifiedName~DepositExpiryConcurrencyTests" -m:1`. Expected thiếu service hoặc assertion state/batch/concurrency thất bại.
+- [x] **Step 4 — Implement service.** Candidates AsNoTracking tại cutoff, filter OR theo active Spa slot/room type, keyset theo booking ID; mỗi batch lock toàn bộ booking trước union slots/rooms/deposits. Recheck/load fresh sau lock, giờ server không sớm hơn cutoff. Không mutate tracked graph lấy trước lock; không clear tracker làm mất thay đổi unrelated của caller. Candidate không còn đủ guard bỏ qua, không lặp vô hạn. Current/ambient transaction và mixed scope sai ném `InvalidOperationException`/`ArgumentException` phù hợp; IDs không dương ném `ArgumentException`. Entry point chỉ mutate graph dưới current transaction, không SaveChanges. Invalid counters/receipt actor làm rollback batch, không clamp che sai dữ liệu. Save/commit từng batch, trả count thực chuyển; đã commit batch trước không rollback vì batch sau lỗi.
+- [x] **Step 5 — Chạy xanh:** lệnh Step 3; rồi filter `Foundation.CapacityTests` để xác minh read compensation không double-trừ sau cleanup. Expected PASS; timeout test được xem là fail, không bỏ qua.
+- [x] **Step 6 — Commit:** files Task 5; `git commit -m "feat(deposits): expire targeted holds safely in bounded transactions"`.
 
 ## Task 6: Settlement helper và terminal matrix
 
@@ -185,7 +185,7 @@ Assert.Equal(RefundState.CHO_HOAN, newlyCreatedRefund.TrangThai);
 
 **Interfaces:** ba method void/decimal đúng spec mục 7: `SettleCancelledPetInMemory(DonDatLich booking, ChiTietDon pet, IReadOnlySet<int> completedComponentIds, int nightsStayed, DateTimeOffset now)`, `decimal CalculateObligatedDepositAmount(DonDatLich booking)`, `void TryTransitionBookingTerminalState(DonDatLich booking, DateTimeOffset now)`. Consumes internal DepositAccounting; không DbContext/email/SaveChanges.
 
-- [ ] **Step 1 — Viết tests tính tiền thuần graph.** `PartialCombo_ChargesOnlyCompletedRetailSnapshot`: size S, combo350k, component đã làm150k, component250k chưa làm → cha HOAN_TAT giá150k, phần chưa làm HUY. Full combo giữ350k; chưa làm giá0/HUY; dịch vụ đơn HOAN_TAT giữ giá. `CancelledTarget_UsesActualNightsBeforeOrAfterStateMutation`: room250k×3, nightsStayed1, một component150k → tổng400k ở cả hai thứ tự state. `OtherPendingPet_UsesFrozenSizeAndSnapshotNotCurrentCatalog` thêm pet khác size cam kết M=200k và phí hiệu lực50k → tổng650k. Invalid IDs hoặc thiếu snapshot ở pet khác phải fail trước khi mutate bất kỳ service, nights hoặc total nào. Assert components không có HuyAt/schema mới, không có refund được tạo.
+- [x] **Step 1 — Viết tests tính tiền thuần graph.** `PartialCombo_ChargesOnlyCompletedRetailSnapshot`: size S, combo350k, component đã làm150k, component250k chưa làm → cha HOAN_TAT giá150k, phần chưa làm HUY. Full combo giữ350k; chưa làm giá0/HUY; dịch vụ đơn HOAN_TAT giữ giá. `CancelledTarget_UsesActualNightsBeforeOrAfterStateMutation`: room250k×3, nightsStayed1, một component150k → tổng400k ở cả hai thứ tự state. `OtherPendingPet_UsesFrozenSizeAndSnapshotNotCurrentCatalog` thêm pet khác size cam kết M=200k và phí hiệu lực50k → tổng650k. Invalid IDs hoặc thiếu snapshot ở pet khác phải fail trước khi mutate bất kỳ service, nights hoặc total nào. Assert components không có HuyAt/schema mới, không có refund được tạo.
 
 ```csharp
 helper.SettleCancelledPetInMemory(booking, pet, completedIds, 1, now);
@@ -194,11 +194,11 @@ Assert.Equal(1, pet.SoDemDaO);
 Assert.Equal(150000m, comboLine.GiaChot);
 ```
 
-- [ ] **Step 2 — Viết tests nghĩa vụ/terminal.** `RefundBudget_DoesNotGrowWhenReservedRefundIsPaid`: received600k/payable400k/reserved100k → budget100k cả trước/sau hoàn; active invoice dùng CocKhauTru, revoked không chiếm cọc. Matrix M2-04: invoice PAID + mọi noncancel DONE + canceled đã trả →COMPLETED; thiếu từng điều kiện giữ state. Matrix M2-05 IN_PROGRESS/all canceled: còn pet chưa trả, UNPAID, CHO_HOAN, surplus bất kỳ → giữ; trả đủ+quyết toán+refund xong →CANCELLED. Payable0 không invoice được khép nếu tiền/refund đã xử lý; payable>0 chưa invoice không được khép. `PrecheckinAllCancelled_WithPendingRefund_ClosesWithoutForfeiture` (RF03): CONFIRMED, mọi CheckInAt null/canceled, refund CHO_HOAN và dư cọc vẫn được CANCELLED nếu không UNPAID; LoaiHuy null, nghĩa vụ/giuLai0 trước/sau. Có pet thực tế đã check-in không được vào nhánh này chỉ vì booking state sai. Empty pets không terminal, gọi lặp giữ timestamp.
-- [ ] **Step 3 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BillingSettlementTests" -m:1`. Expected thiếu helper hoặc sai công thức/matrix.
-- [ ] **Step 4 — Implement helper.** Validate toàn graph cần giá trước khi mutate; target coi như hủy khi tính phòng dù state chưa đổi. Recompute từ giá chốt/size cam kết snapshot, không cộng lại components. Chỉ set state dịch vụ/nights/total như spec; caller sở hữu pet cancellation/audit/resources. Terminal precheckin yêu cầu thực tế chưa pet nào CheckInAt, không chỉ state PENDING/CONFIRMED; M2-05 đang phục vụ chờ hoàn, M2-04 không thêm điều kiện đó. LoaiHuy all-E47 giữ null. Dùng accounting chung, lỗi graph không fallback0; không tự tạo refund.
-- [ ] **Step 5 — Chạy xanh:** lệnh Step 3, rồi filter `BookingDepositProjectionTests`. Expected PASS, công thức penalty đồng nhất.
-- [ ] **Step 6 — Commit:** files Task 6; `git commit -m "feat(billing): settle cancelled pets and terminal booking states"`.
+- [x] **Step 2 — Viết tests nghĩa vụ/terminal.** `RefundBudget_DoesNotGrowWhenReservedRefundIsPaid`: received600k/payable400k/reserved100k → budget100k cả trước/sau hoàn; active invoice dùng CocKhauTru, revoked không chiếm cọc. Matrix M2-04: invoice PAID + mọi noncancel DONE + canceled đã trả →COMPLETED; thiếu từng điều kiện giữ state. Matrix M2-05 IN_PROGRESS/all canceled: còn pet chưa trả, UNPAID, CHO_HOAN, surplus bất kỳ → giữ; trả đủ+quyết toán+refund xong →CANCELLED. Payable0 không invoice được khép nếu tiền/refund đã xử lý; payable>0 chưa invoice không được khép. `PrecheckinAllCancelled_WithPendingRefund_ClosesWithoutForfeiture` (RF03): CONFIRMED, mọi CheckInAt null/canceled, refund CHO_HOAN và dư cọc vẫn được CANCELLED nếu không UNPAID; LoaiHuy null, nghĩa vụ/giuLai0 trước/sau. Có pet thực tế đã check-in không được vào nhánh này chỉ vì booking state sai. Empty pets không terminal, gọi lặp giữ timestamp.
+- [x] **Step 3 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BillingSettlementTests" -m:1`. Expected thiếu helper hoặc sai công thức/matrix.
+- [x] **Step 4 — Implement helper.** Validate toàn graph cần giá trước khi mutate; target coi như hủy khi tính phòng dù state chưa đổi. Recompute từ giá chốt/size cam kết snapshot, không cộng lại components. Chỉ set state dịch vụ/nights/total như spec; caller sở hữu pet cancellation/audit/resources. Terminal precheckin yêu cầu thực tế chưa pet nào CheckInAt, không chỉ state PENDING/CONFIRMED; M2-05 đang phục vụ chờ hoàn, M2-04 không thêm điều kiện đó. LoaiHuy all-E47 giữ null. Dùng accounting chung, lỗi graph không fallback0; không tự tạo refund.
+- [x] **Step 5 — Chạy xanh:** lệnh Step 3, rồi filter `BookingDepositProjectionTests`. Expected PASS, công thức penalty đồng nhất.
+- [x] **Step 6 — Commit:** files Task 6; `git commit -m "feat(billing): settle cancelled pets and terminal booking states"`.
 
 ## Task 7: MailKit và email interface không đổi semantics
 
@@ -208,11 +208,11 @@ Assert.Equal(150000m, comboLine.GiaChot);
 
 **Interfaces:** giữ hai method hiện tại; thêm `Task SendTrackingResendAsync(string recipient, string trackingCode, CancellationToken ct)` và `Task SendRefundConfirmedAsync(string recipient, string trackingCode, int refundId, decimal amount, DateTimeOffset refundedAt, CancellationToken ct)`.
 
-- [ ] **Step 1 — Viết tests qua SMTP loopback trong test file.** Dùng `TcpListener` .NET với script SMTP tối thiểu, không package test mới; chỉ lắng nghe loopback, port động. `FourEmails_UseCorrectRecipientAndVietnameseText`, `TrackingResend_ReusesExistingCode`, `RefundEmail_DoesNotIncludeRawEvidence`, `SmtpFailure_PropagatesAndCannotReportSent`, `Cancellation_StopsPendingSend`. Capture DATA/MIME của bốn method, assert đúng recipient/trackingCode; refund gồm ID/amount/time. Cases thiếu Host/From fail rõ. Giữ regression existing `BookingCreateEndpointTests` về gửi lỗi sau commit và replay không gửi lần hai.
-- [ ] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~SmtpEmailSenderTests" -m:1`. Expected thiếu method hoặc khác behavior sender, không dựa gửi SMTP ngoài máy.
-- [ ] **Step 3 — Pin package và implement.** Kiểm tra version MailKit ổn định/tương thích lúc thực thi bằng nguồn chính thức/NuGet, ghi exact version vào csproj, restore solution. Dùng `MimeMessage`, `TextPart("plain")`, MailKit SMTP client per send; 465 `SslOnConnect`, 587 `StartTls` khi EnableSsl, explicit false cho local SMTP tests. Timeout hữu hạn; đề xuất client Timeout=8000ms, caller token giữ quyền hủy sớm hơn. Không bỏ certificate validation hoặc tự retry. Port SSL khác hai port trên fail-fast cấu hình thay vì tự downgrade; nếu cần hỗ trợ thì phải có cấu hình explicit được review. Cập nhật ba doubles với hai method mới và giữ recording semantics cũ.
-- [ ] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BookingCreateEndpointTests|FullyQualifiedName~BookingManagementEndpointTests|FullyQualifiedName~SpaFlowTests" -m:1`. Expected PASS, booking commit còn tồn tại khi SMTP lỗi.
-- [ ] **Step 5 — Commit:** chỉ files Task 7; `git commit -m "feat(email): use MailKit for booking and refund notifications"`.
+- [x] **Step 1 — Viết tests qua SMTP loopback trong test file.** Dùng `TcpListener` .NET với script SMTP tối thiểu, không package test mới; chỉ lắng nghe loopback, port động. `FourEmails_UseCorrectRecipientAndVietnameseText`, `TrackingResend_ReusesExistingCode`, `RefundEmail_DoesNotIncludeRawEvidence`, `SmtpFailure_PropagatesAndCannotReportSent`, `Cancellation_StopsPendingSend`. Capture DATA/MIME của bốn method, assert đúng recipient/trackingCode; refund gồm ID/amount/time. Cases thiếu Host/From fail rõ. Giữ regression existing `BookingCreateEndpointTests` về gửi lỗi sau commit và replay không gửi lần hai.
+- [x] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~SmtpEmailSenderTests" -m:1`. Expected thiếu method hoặc khác behavior sender, không dựa gửi SMTP ngoài máy.
+- [x] **Step 3 — Pin package và implement.** Kiểm tra version MailKit ổn định/tương thích lúc thực thi bằng nguồn chính thức/NuGet, ghi exact version vào csproj, restore solution. Dùng `MimeMessage`, `TextPart("plain")`, MailKit SMTP client per send; 465 `SslOnConnect`, 587 `StartTls` khi EnableSsl, explicit false cho local SMTP tests. Timeout hữu hạn; đề xuất client Timeout=8000ms, caller token giữ quyền hủy sớm hơn. Không bỏ certificate validation hoặc tự retry. Port SSL khác hai port trên fail-fast cấu hình thay vì tự downgrade; nếu cần hỗ trợ thì phải có cấu hình explicit được review. Cập nhật ba doubles với hai method mới và giữ recording semantics cũ.
+- [x] **Step 4 — Chạy xanh:** lệnh Step 2 và `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~BookingCreateEndpointTests|FullyQualifiedName~BookingManagementEndpointTests|FullyQualifiedName~SpaFlowTests" -m:1`. Expected PASS, booking commit còn tồn tại khi SMTP lỗi.
+- [x] **Step 5 — Commit:** chỉ files Task 7; `git commit -m "feat(email): use MailKit for booking and refund notifications"`.
 
 ## Task 8: Worker, host integration và handoff một PR
 
@@ -220,9 +220,9 @@ Assert.Equal(150000m, comboLine.GiaChot);
 
 **Files:** tạo `backend/src/PetSpa.Api/Services/Billing/DepositExpiryBackgroundService.cs`, `Foundation/Sprint2FoundationTests.cs`; sửa `Program.cs`, `backend/README.md`. Handoff docs: cập nhật đúng phần #14/expiry/reference trong `docs/plans/sprint-2/sprint-2-plan.md`, chữ ký/cách gọi expiry của `dev-a-plan.md`, `dev-c-plan.md`, quy tắc all-E47/terminal trong `dev-b-plan.md` khi có nội dung cũ trái spec; không rewrite các phần khác.
 
-**Interfaces:** `DepositExpiryBackgroundService : BackgroundService` consumes `IServiceScopeFactory`, `IConfiguration`, `TimeProvider`, `ILogger<DepositExpiryBackgroundService>`; protected `Task ExecuteAsync(CancellationToken stoppingToken)`. Resolve IDepositExpiryService trong scope, gọi all-null target theo cutoff từ clock; không nhận DbContext trong constructor worker.
+**Interfaces:** `DepositExpiryBackgroundService : BackgroundService` consumes `IServiceScopeFactory`, `IConfiguration`, `TimeProvider`, `ILogger<DepositExpiryBackgroundService>` và optional `IHostEnvironment` để đánh giá cờ ở lúc chạy sau config override; protected `Task ExecuteAsync(CancellationToken stoppingToken)`. Resolve IDepositExpiryService trong scope, gọi all-null target theo cutoff từ clock; không nhận DbContext trong constructor worker.
 
-- [ ] **Step 1 — Viết host tests.** `Host_ResolvesAllFoundationServices`; `Testing_DefaultWorkerDisabled_ExplicitTrueEnablesIt`; `Worker_DrainsTwentyOneBookings_WithoutOverlappingRuns`; `Worker_DisposesScope_ContinuesAfterFailedSweep_AndStopsOnCancellation`; `Worker_GlobalSweep_RunsEvenWhenExtensionCurrentlyOff`. Dùng fake service có gates/throw ở lần đầu; bổ sung timer điều khiển được cho test clock trong FoundationTestSupport, không thêm package và không sleep chờ interval. Interval=0/âm fail config rõ; mặc định30s. Khi disabled không có lượt sweep nào:
+- [x] **Step 1 — Viết host tests.** `Host_ResolvesAllFoundationServices`; `Testing_DefaultWorkerDisabled_ExplicitTrueEnablesIt`; `Worker_DrainsTwentyOneBookings_WithoutOverlappingRuns`; `Worker_DisposesScope_ContinuesAfterFailedSweep_AndStopsOnCancellation`; `Worker_GlobalSweep_RunsEvenWhenExtensionCurrentlyOff`. Dùng fake service có gates/throw ở lần đầu; bổ sung timer điều khiển được cho test clock trong FoundationTestSupport, không thêm package và không sleep chờ interval. Interval=0/âm fail config rõ; mặc định30s. Khi disabled không có lượt sweep nào:
 
 ```csharp
 using var scope = host.Services.CreateScope();
@@ -231,10 +231,10 @@ Assert.NotNull(scope.ServiceProvider.GetRequiredService<IDepositExpiryService>()
 Assert.NotNull(scope.ServiceProvider.GetRequiredService<IBillingSettlementHelper>());
 ```
 
-- [ ] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~Sprint2FoundationTests" -m:1`. Expected worker/config chưa có; không giả implementer đã test full endpoint Sprint 2.
-- [ ] **Step 3 — Implement worker/config/docs.** Worker tuần tự, tạo/dispose scope từng vòng, cancellation không bị log như lỗi bất ngờ, lỗi sweep không giết các vòng sau; chờ bằng `Task.Delay(interval, clock, stoppingToken)` để test điều khiển timer. `DepositExpiry:BackgroundEnabled` fallback `!IsEnvironment("Testing")`, explicit config override; `IntervalSeconds` mặc định30 và >0. README chỉ key công khai, topology test loopback, lệnh kiểm chứng; không đọc/copy credentials từ appsettings. Handoff docs phải dùng targeted args, `now >= HetHanAt`, LoaiHuy whole-cancel, masked references và giữ đêm đã ở; bỏ giả định số dòng helper/4h là hard limit. Nhắc E42 bổ sung refund sau late receipt trong transaction; E19/E47/E49/E23/E26/E45 nối terminal helper ở issue owner. Giữ scope và thứ tự lock của spec.
-- [ ] **Step 4 — Chạy xanh task:** lệnh Step 2; expected PASS. Chạy smoke HTTP E08/E10a của Task 2 để chứng minh host/worker mặc định không phá tests.
-- [ ] **Step 5 — Full verification và kiểm scope:**
+- [x] **Step 2 — Chạy đỏ:** `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~Sprint2FoundationTests" -m:1`. Expected worker/config chưa có; không giả implementer đã test full endpoint Sprint 2.
+- [x] **Step 3 — Implement worker/config/docs.** Worker tuần tự, tạo/dispose scope từng vòng, cancellation không bị log như lỗi bất ngờ, lỗi sweep không giết các vòng sau; chờ bằng `Task.Delay(interval, clock, stoppingToken)` để test điều khiển timer. `DepositExpiry:BackgroundEnabled` fallback `!IsEnvironment("Testing")`, explicit config override; `IntervalSeconds` mặc định30 và >0. README chỉ key công khai, topology test loopback, lệnh kiểm chứng; không đọc/copy credentials từ appsettings. Handoff docs phải dùng targeted args, `now >= HetHanAt`, LoaiHuy whole-cancel, masked references và giữ đêm đã ở; bỏ giả định số dòng helper/4h là hard limit. Nhắc E42 bổ sung refund sau late receipt trong transaction; E19/E47/E49/E23/E26/E45 nối terminal helper ở issue owner. Giữ scope và thứ tự lock của spec.
+- [x] **Step 4 — Chạy xanh task:** lệnh Step 2; expected PASS. Chạy smoke HTTP E08/E10a của Task 2 để chứng minh host/worker mặc định không phá tests.
+- [x] **Step 5 — Full verification và kiểm scope:**
 
 ```powershell
 dotnet build backend/PetSpa.sln -m:1
@@ -246,7 +246,7 @@ git status --short
 
 Expected: build0 errors/0 warnings, full tests PASS, không skip PostgreSQL. Kiểm diff không có Entity/Configuration/migration/frontend, không có secret. Nếu có lỗi, giữ bằng chứng và sửa trong phạm vi trước khi tuyên bố hoàn tất. Đo thời gian capacity/cleanup và lock wait trên fixture đại diện để ghi số đo; không dùng stopwatch dưới500ms trên máy dev làm chứng nhận NFR hoặc hard assertion dễ flaky.
 
-- [ ] **Step 6 — Commit và chuẩn bị PR:** `git commit -m "feat(foundation): wire deposit expiry worker and verify Sprint 2 baseline"` sau khi stage đúng files Task 8. PR mô tả foundation/consumer boundary, AC matrix và output kiểm chứng thực chạy. Tối thiểu hai thành viên khác Approve, CI xanh trước Squash & Merge; việc gửi PR/merge theo ủy quyền lúc thực thi, không coi checkbox này là đã merge.
+- [x] **Step 6 — Commit và chuẩn bị PR:** `git commit -m "feat(foundation): wire deposit expiry worker and verify Sprint 2 baseline"` sau khi stage đúng files Task 8. PR mô tả foundation/consumer boundary, AC matrix và output kiểm chứng thực chạy. Tối thiểu hai thành viên khác Approve, CI xanh trước Squash & Merge; việc gửi PR/merge theo ủy quyền lúc thực thi, không coi checkbox này là đã merge.
 
 ## Coverage và self-review của plan
 
@@ -266,3 +266,13 @@ Self-review: signatures expiry có optional targets cuối để giữ source co
 ## Execution handoff
 
 Đề xuất **Native**: một implementer làm tuần tự tám task và giữ nhất quán graph/lock/accounting, review toàn nhánh ở cuối theo workflow được chọn. Có thể chọn **Subagent-driven** nếu muốn review độc lập từng task; chi phí context/review cao hơn. Một PR và tối thiểu hai reviewer của nhóm vẫn áp dụng với cả hai cách. Plan cần Tech Lead review và chọn cách thực thi; việc tạo tài liệu này không bắt đầu implementation.
+
+Execution: Tech Lead chọn Native và yêu cầu triển khai ngày 2026-11-22. Tasks1–7 đã commit sau các bước RED/GREEN; Task8 đã qua local verification; chờ whole-branch fresh review. CI và hai approvals của nhóm là gate merge riêng, chưa được chứng nhận bởi local tests.
+
+## Local verification — 2026-11-22
+
+- Build: PASS, 0 warnings/errors.
+- Foundation + Seed: PASS151/151, skipped0, PostgreSQL17 local.
+- Full backend: PASS358/358, skipped0 (2m25s); SMTP loopback, không gửi mail thật.
+- `git diff --check`: PASS; không Entity/Configuration/migration/auth/frontend change.
+- Native: task commits riêng trên feat/issue-14-sprint2-foundation. PR description chuẩn bị ở scratch; chưa push/merge hoặc chứng nhận CI/hai approvals.
