@@ -14,6 +14,7 @@ archive/
 .agents/
 .codegraph/
 .codex/
+.superpowers/
 
 # Local Environment Variables
 .env
