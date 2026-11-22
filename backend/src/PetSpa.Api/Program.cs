@@ -89,6 +89,7 @@ builder.Services.AddRateLimiter(options =>
 builder.Services.AddScoped<ITokenService, TokenService>();
 builder.Services.AddScoped<IAvailabilityService, AvailabilityService>();
 builder.Services.AddScoped<SpaCapacityCalculator>();
+builder.Services.AddScoped<HotelCapacityCalculator>();
 builder.Services.AddScoped<BookingCreateService>();
 builder.Services.AddScoped<BookingProofService>();
 builder.Services.AddScoped<BookingManagementService>();
