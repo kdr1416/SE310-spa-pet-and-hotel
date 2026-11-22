@@ -468,6 +468,12 @@ public class SpaFlowTests
 
     private sealed class RecordingEmail : IEmailSender
     {
+        public Task SendTrackingResendAsync(string recipient, string trackingCode, CancellationToken ct) =>
+            throw new InvalidOperationException("Sprint 1 does not send tracking resend emails.");
+        public Task SendRefundConfirmedAsync(string recipient, string trackingCode, int refundId, decimal amount,
+            DateTimeOffset refundedAt, CancellationToken ct) =>
+            throw new InvalidOperationException("Sprint 1 does not send refund emails.");
+
         public List<(string Kind, string Recipient, string Code)> Deliveries { get; } = [];
 
         public Task SendTrackingCodeAsync(string recipient, string trackingCode, CancellationToken cancellationToken)
