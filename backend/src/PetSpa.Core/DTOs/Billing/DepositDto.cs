@@ -18,7 +18,7 @@ public sealed class ReceiptCreate : ContractCommand
     public decimal SoTien { get; init; }
     [JsonRequired, Required, RegularExpression("CASH|BANK_TRANSFER")]
     public string PhuongThuc { get; init; } = string.Empty;
-    [JsonRequired]
+    [JsonRequired, JsonConverter(typeof(ExplicitOffsetInstantConverter))]
     public DateTimeOffset GiaoDichAt { get; init; }
     [StringLength(150, MinimumLength = 1)]
     public string? MaGiaoDich { get; init { field = value ?? throw new JsonException("MaGiaoDich không được null."); } }
@@ -40,11 +40,10 @@ public sealed class RefundConfirm : ContractCommand
 {
     [JsonRequired, Required, RegularExpression("CASH|BANK_TRANSFER")]
     public string PhuongThuc { get; init; } = string.Empty;
-    [JsonRequired]
+    [JsonRequired, JsonConverter(typeof(ExplicitOffsetInstantConverter))]
     public DateTimeOffset HoanAt { get; init; }
     [JsonRequired, Required, StringLength(150, MinimumLength = 1)]
     public string ThamChieu { get; init; } = string.Empty;
     [StringLength(2000, MinimumLength = 1)]
     public string? BangChungFileKey { get; init { field = value ?? throw new JsonException("BangChungFileKey không được null."); } }
 }
-

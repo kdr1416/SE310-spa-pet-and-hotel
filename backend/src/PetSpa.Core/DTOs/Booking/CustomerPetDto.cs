@@ -73,12 +73,16 @@ public sealed class AssignmentRequest : ContractCommand
     public string LyDo { get; init; } = string.Empty;
 }
 
-public sealed class ShiftQuery
+public sealed class ShiftQuery : IValidatableObject
 {
     [JsonRequired]
     public DateOnly Ngay { get; init; }
     [JsonRequired, Range(1, int.MaxValue)]
     public int MaCa { get; init; }
+    public IEnumerable<ValidationResult> Validate(ValidationContext validationContext)
+    {
+        if (Ngay == default) yield return new ValidationResult("Ngày là bắt buộc.", [nameof(Ngay)]);
+    }
 }
 
 public sealed class PetCancelRequest : ContractCommand
@@ -95,4 +99,3 @@ public sealed class PetCancelRequest : ContractCommand
             yield return new ValidationResult("Mã thành phần phải dương và không trùng.", [nameof(MaThanhPhanDaLam)]);
     }
 }
-

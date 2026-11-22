@@ -42,14 +42,24 @@ public sealed class DepositExpiryService(PetSpaDbContext context, DbContextOptio
                 b.TienCocDonDatLich.TrangThaiYeuCau == DepositRequestState.CHO_THU &&
                 b.TienCocDonDatLich.HetHanAt <= cutoff);
             if (targetBookingId.HasValue) candidates = candidates.Where(b => b.Id == targetBookingId.Value);
-            if (filtered) candidates = candidates.Where(b => b.ChiTietDonDonDatLichItems.Any(p =>
-                p.LoaiPhongId.HasValue && targetRooms.Contains(p.LoaiPhongId.Value) ||
-                p.DichVuTrongDonChiTietDonItems.Any(s => s.TrangThai != OrderServiceState.HUY && targetSlots.Contains(s.KhungGioId))));
+            if (filtered) candidates = WithTargetResources(candidates, targetSlots, targetRooms);
             var ids = await candidates.OrderBy(b => b.Id).Select(b => b.Id).Take(20).ToArrayAsync(ct);
             if (ids.Length == 0) return total;
             lastId = ids[^1];
             await using var tx = await context.Database.BeginTransactionAsync(ct);
             await context.Database.SqlQuery<int>($"SELECT id AS \"Value\" FROM don_dat_lich WHERE id = ANY({ids}) ORDER BY id FOR UPDATE").ToListAsync(ct);
+
+            // Booking can move or release its target resources while this sweep waits for the booking lock.
+            if (filtered)
+            {
+                ids = await WithTargetResources(context.DonDatLichSet.AsNoTracking().Where(b => ids.Contains(b.Id)), targetSlots, targetRooms)
+                    .OrderBy(b => b.Id).Select(b => b.Id).ToArrayAsync(ct);
+                if (ids.Length == 0)
+                {
+                    await tx.CommitAsync(ct);
+                    continue;
+                }
+            }
 
             var intakeSlots = await context.DonDatLichSet.AsNoTracking().Where(b => ids.Contains(b.Id)).Select(b => b.KhungGioId).ToArrayAsync(ct);
             var serviceSlots = await context.DichVuTrongDonSet.AsNoTracking().Where(s => ids.Contains(s.ChiTietDon.DonDatLichId))
@@ -128,4 +138,11 @@ public sealed class DepositExpiryService(PetSpaDbContext context, DbContextOptio
 
     private static bool IsDue(DonDatLich booking, DateTimeOffset now) => booking.TrangThai == BookingState.PENDING &&
         booking.TienCocDonDatLich is { TrangThaiYeuCau: DepositRequestState.CHO_THU } deposit && deposit.HetHanAt <= now;
+
+    private static IQueryable<DonDatLich> WithTargetResources(IQueryable<DonDatLich> bookings, int[] slots, int[] rooms) =>
+        bookings.Where(b => b.ChiTietDonDonDatLichItems.Any(p =>
+            p.LoaiPhongId.HasValue && rooms.Contains(p.LoaiPhongId.Value) &&
+                (p.TrangThaiChamSoc != PetCareState.CANCELLED ||
+                    p.CheckInAt != null && (p.TraLaiAt == null || (p.SoDemDaO ?? 0) > 0)) ||
+            p.DichVuTrongDonChiTietDonItems.Any(s => s.TrangThai != OrderServiceState.HUY && slots.Contains(s.KhungGioId))));
 }

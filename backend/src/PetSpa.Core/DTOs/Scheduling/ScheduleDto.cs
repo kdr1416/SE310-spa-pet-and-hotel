@@ -44,9 +44,9 @@ public sealed class ShiftWindowWriteRequest : ContractCommand
     public DateOnly TuNgay { get; init; }
     [JsonRequired]
     public DateOnly DenNgay { get; init; }
-    [JsonRequired]
+    [JsonRequired, JsonConverter(typeof(ExplicitOffsetInstantConverter))]
     public DateTimeOffset MoAt { get; init; }
-    [JsonRequired]
+    [JsonRequired, JsonConverter(typeof(ExplicitOffsetInstantConverter))]
     public DateTimeOffset DongAt { get; init; }
     protected override IEnumerable<ValidationResult> ValidateBusiness()
     {
@@ -64,4 +64,3 @@ public sealed class ShiftTransferRequest : ContractCommand
     [JsonRequired, Required, StringLength(1000, MinimumLength = 1)]
     public string LyDo { get; init; } = string.Empty;
 }
-

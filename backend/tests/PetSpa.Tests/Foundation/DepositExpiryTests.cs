@@ -162,6 +162,30 @@ public sealed class DepositExpiryTests
         return new DepositExpiryService(db, options.Options, fixture.Clock);
     }
 
+    [Fact]
+    public async Task RoomTarget_DoesNotExpireBookingWhoseOnlyTargetPetWasCancelledBeforeCheckin()
+    {
+        await using var fixture = await FoundationTestSupport.CreateAsync(Now);
+        await using var db = fixture.Database.CreateContext();
+        var rooms = await db.LoaiPhongSet.OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync();
+        var booking = await fixture.AddBookingAsync(db, false, rooms[0]);
+        var cancelled = booking.ChiTietDonDonDatLichItems.Single();
+        cancelled.TrangThaiChamSoc = PetCareState.CANCELLED;
+        cancelled.TraLaiAt = Now;
+        booking.ChiTietDonDonDatLichItems.Add(new ChiTietDon
+        {
+            TenPetSnapshot = "Active pet", CanNangKhaiBao = 4m, LoaiPhongId = rooms[1], SoDemChot = 3,
+            ThuCung = new ThuCung { TenThuCung = "Active pet", CanNang = 4m, KhachHangId = booking.KhachHangId }
+        });
+        booking.TienCocDonDatLich!.GiaoDichThuTienCocItems.Add(Receipt(20000m, await db.NhanVienSet.Select(x => x.Id).FirstAsync(), Now));
+        await db.SaveChangesAsync();
+        Assert.Equal(0, await Service(fixture, db).ExpireOverdueDepositsAsync(Now, null, default, targetRoomTypeIds: [rooms[0]]));
+        await using var verify = fixture.Database.CreateContext();
+        Assert.Equal(BookingState.PENDING, (await verify.DonDatLichSet.SingleAsync()).TrangThai);
+        Assert.Empty(await verify.HoanCocSet.ToArrayAsync());
+        Assert.Equal(1, await Service(fixture, db).ExpireOverdueDepositsAsync(Now, null, default, targetRoomTypeIds: [rooms[1]]));
+    }
+
     internal static GiaoDichThu Receipt(decimal amount, int actor, DateTimeOffset now) => new()
     { RequestId = Guid.NewGuid(), SoTien = amount, XacNhanBoiId = actor, GiaoDichAt = now, XacNhanAt = now };
 

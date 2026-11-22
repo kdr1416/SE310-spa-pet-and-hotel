@@ -69,4 +69,3 @@ public sealed class ReasonCommand : ContractCommand
     [JsonRequired, Required, StringLength(1000, MinimumLength = 1)]
     public string LyDo { get; init; } = string.Empty;
 }
-

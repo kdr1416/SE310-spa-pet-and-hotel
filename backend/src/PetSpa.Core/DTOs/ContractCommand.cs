@@ -29,5 +29,5 @@ public sealed class VndAmountAttribute : ValidationAttribute
 public sealed class PetWeightAttribute : ValidationAttribute
 {
     public override bool IsValid(object? value) => value is null ||
-        value is decimal weight && weight > 0m && decimal.Round(weight, 2) == weight;
+        value is decimal weight && weight > 0m && weight <= 999.99m && decimal.Round(weight, 2) == weight;
 }

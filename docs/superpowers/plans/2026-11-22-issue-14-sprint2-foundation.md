@@ -267,12 +267,35 @@ Self-review: signatures expiry có optional targets cuối để giữ source co
 
 Đề xuất **Native**: một implementer làm tuần tự tám task và giữ nhất quán graph/lock/accounting, review toàn nhánh ở cuối theo workflow được chọn. Có thể chọn **Subagent-driven** nếu muốn review độc lập từng task; chi phí context/review cao hơn. Một PR và tối thiểu hai reviewer của nhóm vẫn áp dụng với cả hai cách. Plan cần Tech Lead review và chọn cách thực thi; việc tạo tài liệu này không bắt đầu implementation.
 
-Execution: Tech Lead chọn Native và yêu cầu triển khai ngày 2026-11-22. Tasks1–7 đã commit sau các bước RED/GREEN; Task8 đã qua local verification; chờ whole-branch fresh review. CI và hai approvals của nhóm là gate merge riêng, chưa được chứng nhận bởi local tests.
+Execution: Tech Lead chọn Native và yêu cầu triển khai ngày 2026-11-22. Tasks1–7 đã commit sau các bước RED/GREEN; Task8 đã qua local verification và fresh review; bốn findings được xử lý trong một lượt RED→GREEN, full suite sau sửa review PASS368/368, skipped0, build0 warnings/errors. CI và hai approvals của nhóm là gate merge riêng, chưa được chứng nhận bởi local tests.
 
 ## Local verification — 2026-11-22
 
 - Build: PASS, 0 warnings/errors.
 - Foundation + Seed: PASS151/151, skipped0, PostgreSQL17 local.
 - Full backend: PASS358/358, skipped0 (2m25s); SMTP loopback, không gửi mail thật.
-- `git diff --check`: PASS; không Entity/Configuration/migration/auth/frontend change.
+- `git diff --check` của working diff: PASS; committed-range check phát hiện bốn dòng trống EOF đã chuẩn hóa trong lượt sửa review; không Entity/Configuration/migration/auth/frontend change.
 - Native: task commits riêng trên feat/issue-14-sprint2-foundation. PR description chuẩn bị ở scratch; chưa push/merge hoặc chứng nhận CI/hai approvals.
+
+## Native review và các quyết định khi thực thi
+
+Fresh reviewer đọc range2c36971..c8eda20; không mutate checkout. Bốn phát hiện được xử lý: targeted sweep không chọn pet đã nhả phòng và recheck scope sau lock; bốn input instant bắt buộc offset; cân nặng tối đa999.99; ShiftQuery kiểm tra ngày qua HTTP query binder. Tám failures tái hiện trước sửa, sau sửa91/91 focused tests pass; không còn minor deferred. Đã chuẩn hóa whitespace cuối bốn DTO files. Full suite sau sửa PASS368/368, skipped0 trong2m36s; build0 warnings/errors. Focused review tests91/91 PASS. Không chạy thêm vòng review độc lập thứ hai theo Native workflow.
+
+Các quyết định của implementer theo thứ tự thực hiện (chi phí nếu sai):
+
+1. Nhánh riêng trong checkout hiện tại, sau đó Tech Lead xác nhận cách này; không worktree. Rủi ro là lẫn file unrelated, giảm bằng stage đúng file và giữ hai tài liệu Sprint1 untracked nguyên trạng.
+2. PowerShell ledger/brief thay Bash scripts do MSYS bị sandbox chặn. Rủi ro mất dấu bước, giảm bằng log từng RED/GREEN/commit.
+3. Cluster PostgreSQL test dùng thư mục ASCII writable vì initdb làm mất dấu đường dẫn repository. Chỉ loopback/port riêng, không dùng DB hiện có; rủi ro tiến trình tạm sót lại, dừng sau kiểm chứng.
+4. VSTest và thao tác Git chạy theo escalation được duyệt khi sandbox chặn IPC/ref lock. Không thay quyền truy cập của repository; rủi ro phạm vi command, giữ lệnh đúng test/branch/commit đã duyệt.
+5. Thêm ContractCommand và hai validation attributes dùng chung cho nhiều DTO; không thêm service abstraction. Rủi ro validation lan sai field, kiểm chứng DTO/table cases và optional-null behavior.
+6. Tách private SeedRoomAndComboAsync trong initializer hiện có, giữ cùng transaction/advisory lock. Rủi ro seed phân mảnh, kiểm chứng repeat/repair/concurrent và không overwrite dữ liệu đã sửa.
+7. Spa đọc counters và expired compensation trong cùng SQL statement snapshot. Rủi ro query phức tạp hơn, kiểm chứng PostgreSQL/worker cleanup để tránh double compensation.
+8. Sweep dùng DbContext mới với options của scope; locked entrypoint dùng context caller. Rủi ro caller giữ entity stale, handoff yêu cầu reload sau cleanup; tests bảo vệ không save/detach edits của caller.
+9. Worker luôn đăng ký nhưng chỉ resolve scoped service khi cờ enabled được đánh giá tại ExecuteAsync với config/environment cuối. Rủi ro worker chạy nhầm môi trường, tests bảo vệ Testing default-off và explicit override.
+10. Đồng bộ diễn giải E11/E42: deadline áp cho CHO_THU, không làm hết hiệu lực cọc đã DA_DAP_UNG. Rủi ro consumer dùng mô tả cũ, cập nhật master/per-dev handoff; endpoint hiện có không đổi guard trong#14.
+
+Reviewer declined-to-judge được phân xử: consumer HTTP wiring thuộc#15–#24, live SMTP/Storage thuộc#25 và hiệu năng Neon cần môi trường thực. Đây là giới hạn có chủ đích của#14, chưa có tuyên bố đã nghiệm thu các phần đó. Không có bug review nào được bỏ lại.
+
+Số đo tham khảo: global expiry21 booking theo batches20+1 mất1892ms trên fixture local trong focused worker test, gồm cleanup loop, không phải SLA API/Neon và không chứng nhận NFR<500ms. Targeted writer/per-endpoint latency vẫn cần đo khi consumer tích hợp.
+
+Final gate sau review: `dotnet build backend/PetSpa.sln --no-restore -m:1` PASS0 warnings/errors; `dotnet test backend/PetSpa.sln --no-build --no-restore -m:1` PASS368/368, skipped0; `git diff --check 2c36971` PASS. Các lần kiểm chứng trước151/358 là số trước khi bổ sung10 review regression cases, không phải số cuối.

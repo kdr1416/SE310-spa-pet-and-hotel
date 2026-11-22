@@ -94,6 +94,27 @@ public sealed class DepositExpiryConcurrencyTests
     }
 
     [Fact]
+    public async Task RoomTarget_RecheckedAfterBookingLock_DoesNotExpireMovedReservation()
+    {
+        await using var fixture = await FoundationTestSupport.CreateAsync(Now);
+        await using var blocker = fixture.Database.CreateContext();
+        var rooms = await blocker.LoaiPhongSet.OrderBy(x => x.Id).Select(x => x.Id).ToArrayAsync();
+        var booking = await fixture.AddBookingAsync(blocker, false, rooms[0]);
+        await using var tx = await blocker.Database.BeginTransactionAsync();
+        await blocker.Database.SqlQuery<int>($"SELECT id AS \"Value\" FROM don_dat_lich WHERE id={booking.Id} FOR UPDATE").ToListAsync();
+        await using var sweeper = fixture.Database.CreateContext();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var expiry = DepositExpiryTests.Service(fixture, sweeper).ExpireOverdueDepositsAsync(Now, null, timeout.Token, targetRoomTypeIds: [rooms[0]]);
+        await CareTestSupport.WaitForLockWaitersAsync(fixture.Database.ConnectionString, "%FROM don_dat_lich%FOR UPDATE%", 1, timeout.Token);
+        booking.ChiTietDonDonDatLichItems.Single().LoaiPhongId = rooms[1];
+        await blocker.SaveChangesAsync(timeout.Token);
+        await tx.CommitAsync(timeout.Token);
+        Assert.Equal(0, await expiry);
+        await using var verify = fixture.Database.CreateContext();
+        Assert.Equal(BookingState.PENDING, (await verify.DonDatLichSet.SingleAsync()).TrangThai);
+    }
+
+    [Fact]
     public async Task WriterProtocol_NewHoldExpiresWhileWaiting_ReleasesLocksThenCleansAgain()
     {
         await using var fixture = await FoundationTestSupport.CreateAsync(Now.AddMinutes(-1));

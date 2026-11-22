@@ -94,7 +94,7 @@ Các tên C# dưới đây ánh xạ tới schema cùng ý nghĩa ở contract m
 
 Yêu cầu DTO:
 
-- Immutable theo convention `record` hoặc `init`; ID dương, `Guid.Empty` không hợp lệ ở requestId; `decimal` nguyên VND, `DateOnly`, `DateTimeOffset` theo contract.
+- Immutable theo convention `record` hoặc `init`; ID dương, `Guid.Empty` không hợp lệ ở requestId; `decimal` nguyên VND, `DateOnly`, `DateTimeOffset` theo contract. Các input GiaoDichAt/HoanAt/MoAt/DongAt bắt buộc offset Z hoặc ±HH:mm; không suy ra giờ từ host. PetEdit.CanNang nằm trong (0,999.99] và tối đa hai chữ số thập phân; ShiftQuery.Ngay phải có giá trị khi bind query string, không chỉ khi deserialize JSON.
 - Quy tắc xác thực phân biệt rõ giữa trường bắt buộc (required), trường tùy chọn (optional) và giá trị null: trường tùy chọn có thể vắng mặt trong JSON payload nhưng không mặc nhiên chấp nhận giá trị null. Tests deserialize phải kiểm tra sự khác biệt cho request liên quan.
 - Dùng DataAnnotations và validation cục bộ theo convention hiện có. Những guard cần DB, quyền, ownership, state hoặc XOR nghiệp vụ phải được ghi rõ cho endpoint owner, không coi DTO đã tự kiểm tra đủ.
 - PATCH từ chối field lạ, không cho patch rỗng. `FeeEdit` phải có ít nhất tên hoặc số tiền ngoài lý do/requestId; `PetEdit` phải có ít nhất một business field.
@@ -206,7 +206,7 @@ Phân tầng quét hết hạn (Bounded & Targeted execution protocol):
 - **Background Worker (`DepositExpiryBackgroundService`):** không truyền target IDs, chịu trách nhiệm quét vét cạn toàn bộ candidate pool trên toàn hệ thống bằng cách xử lý tuần tự từng batch 20 đơn cho đến khi hết sạch các đơn quá hạn tại thời điểm cutoff.
 - **Đơn chỉ định (`targetBookingId != null`):** xử lý chính xác đơn mục tiêu được yêu cầu.
 
-Filter: cả hai collection target là null và không có booking ID nghĩa là quét toàn cục; một collection được truyền nhưng cả hai không có ID nghĩa là no-op, không tự chuyển thành quét toàn cục. Hai tập ID có dữ liệu được hợp bằng OR, bỏ ID trùng; ID phải dương. Không kết hợp `targetBookingId` với resource filters. Cutoff cố định để kết thúc một lần quét hữu hạn; đơn chỉ mới hết hạn sau cutoff được xử lý ở lần gọi tiếp theo.
+Filter: cả hai collection target là null và không có booking ID nghĩa là quét toàn cục; một collection được truyền nhưng cả hai không có ID nghĩa là no-op, không tự chuyển thành quét toàn cục. Hai tập ID có dữ liệu được hợp bằng OR, bỏ ID trùng; ID phải dương. Room target chỉ khớp pet còn giữ ít nhất một đêm theo occupancy semantics: pet hủy trước check-in không giữ phòng; pet hủy đã trả và SoDemDaO=0 không giữ phòng. Sau khi chờ booking lock phải kiểm tra lại scope trước khi hủy/nhả/hoàn, tránh xử lý đơn đã chuyển tài nguyên. Không kết hợp `targetBookingId` với resource filters. Cutoff cố định để kết thúc một lần quét hữu hạn; đơn chỉ mới hết hạn sau cutoff được xử lý ở lần gọi tiếp theo.
 
 Handoff cho #15/#17/#22: sau khi chờ khóa tài nguyên, writer đọc lại giờ server. Nếu còn hold liên quan vừa hết hạn sau cutoff dọn dẹp, rollback/thả transaction chính rồi dọn với cutoff mới và thử lại; không gọi expiry quét booking khác khi đang giữ slot/room lock. Booking mới hợp lệ lấy suất cuối là tranh chấp công suất bình thường, không phải lỗi expiry.
 

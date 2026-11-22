@@ -116,6 +116,33 @@ public sealed class SharedDtoContractTests
     }
 
     private static string Command(string properties) => $"{{\"requestId\":\"{Id}\",{properties}}}";
+
+    [Theory]
+    [InlineData("Billing.ReceiptCreate", "giaoDichAt")]
+    [InlineData("Billing.RefundConfirm", "hoanAt")]
+    [InlineData("Scheduling.ShiftWindowWriteRequest", "moAt")]
+    [InlineData("Scheduling.ShiftWindowWriteRequest", "dongAt")]
+    public void InstantInput_RequiresExplicitOffset(string name, string field)
+    {
+        var json = System.Text.Json.Nodes.JsonNode.Parse(ValidRequests.Single(row => (string)row[0] == name)[1].ToString()!)!;
+        foreach (var invalid in new[] { "2035-01-02T10:30:00", "2035-01-02" })
+        {
+            json[field] = invalid;
+            Assert.Throws<JsonException>(() => Deserialize(name, json.ToJsonString()));
+        }
+        foreach (var valid in new[] { "2035-01-02T10:30:00Z", "2035-01-02T10:30:00+07:00", "2035-01-02T10:30:00-05:00" })
+        {
+            json[field] = valid;
+            Assert.NotNull(Deserialize(name, json.ToJsonString()));
+        }
+    }
+
+    [Theory]
+    [InlineData(999.99, true)]
+    [InlineData(1000, false)]
+    public void PetEdit_WeightFitsPostgresPrecision(double weight, bool valid) =>
+        Assert.Equal(valid, Errors(new PetEdit { RequestId = Guid.NewGuid(), CanNang = (decimal)weight }).Count == 0);
+
     private static object Deserialize(string name, string json)
     {
         var type = typeof(BookingQuery).Assembly.GetType("PetSpa.Core.DTOs." + name);
