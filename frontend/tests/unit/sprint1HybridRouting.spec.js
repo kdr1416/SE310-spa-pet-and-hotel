@@ -773,3 +773,229 @@ describe("Sprint 1 reads", () => {
     expect(adapter).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("commands-booking", () => {
+  const contact = { hoTen: "Khách thử nghiệm", soDienThoai: "0901234567", email: "customer@example.test" };
+  const booking = {
+    maDon: 101, trackingCode: "ABCD1234", trangThai: "PENDING",
+    batDauDuKien: "2026-11-23T01:00:00Z", ketThucDuKien: "2026-11-23T01:30:00Z",
+    lienHe: contact, tongTamTinh: 110000, tienCoc: null, hoaDon: null, emailDelivery: "SENT",
+    thuCung: [{
+      maChiTietDon: 15, maThuCung: 25, tenThuCung: "Miu", trangThai: "NOT_ARRIVED",
+      canNangChot: null, sizeThucTe: null, sizeChot: null, tinhTrangLong: null,
+      maLoaiPhong: null, tenNhanVienPhuTrach: null, dichVu: [{
+        maDichVuTrongDon: 35, maDichVu: 11, maCombo: null, maKhungGio: 701,
+        tenDichVu: "Tắm", trangThai: "CHO_THUC_HIEN", sizeChot: null, giaChot: null, thanhPhan: [],
+      }], nhatKy: [], nhanSom: false, banGiaoAt: null, traLaiAt: null,
+    }],
+  };
+  const requestId = "550e8400-e29b-41d4-a716-446655440000";
+  let callOperation;
+  let liveHttpClient;
+  let originalAdapter;
+  let adapter;
+  let envelope;
+
+  beforeEach(async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.stubEnv("VITE_USE_MOCK_API", "false");
+    vi.resetModules();
+    ({ default: liveHttpClient } = await import("../../src/services/api/httpClient"));
+    ({ callOperation } = await import("../../src/services/api/operationClient"));
+    originalAdapter = liveHttpClient.defaults.adapter;
+    envelope = { success: true, data: booking, message: "Thành công", traceId: "test-command-trace" };
+    adapter = vi.fn(async (config) => ({ config, data: envelope, status: 200, statusText: "", headers: {} }));
+    liveHttpClient.defaults.adapter = adapter;
+  });
+
+  afterEach(() => {
+    liveHttpClient.defaults.adapter = originalAdapter;
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it("posts canonical BookingCreate as multipart and preserves explicit service slots and vaccine parts", async () => {
+    const vaccine = new File(["vaccination record"], "vaccine.png", { type: "image/png" });
+    const payload = {
+      requestId, maKhungGio: 701, shiftId: 1, ngayTra: "2026-11-23", actor: 1,
+      lienHe: { ...contact, soDienThoai: "090-123 4567", id: 205 },
+      thuCung: [{
+        tenThuCung: "Miu", loaiPet: "MEO", canNangKhaiBao: 5, ghiChuDiUng: null,
+        vaccinationFileKey: "miu-vaccine", dichVu: [
+          { maDichVu: 11, maCombo: null, maKhungGio: 704, estimatedPrice: 10000 },
+        ],
+      }, {
+        tenThuCung: "Mây", loaiPet: "CHO", canNangKhaiBao: 6, dichVu: [{ maDichVu: 12 }],
+      }],
+      files: { "miu-vaccine": vaccine, extra: vaccine },
+      ghiChu: "Gọi khi tới", tongTamTinh: 10000, trangThai: "CONFIRMED",
+    };
+
+    expect(await callOperation("createBooking", payload, true)).toEqual(envelope);
+
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const [config] = adapter.mock.calls[0];
+    expect(config).toMatchObject({ method: "post", url: "/bookings" });
+    expect(config.headers.getContentType()).not.toContain("application/json");
+    expect(config.data).toBeInstanceOf(FormData);
+    expect(Array.from(config.data.keys())).toEqual(["payload", "miu-vaccine"]);
+    expect(config.data.get("miu-vaccine")).toBe(vaccine);
+    expect(JSON.parse(config.data.get("payload"))).toEqual({
+      requestId, maKhungGio: 701, ngayTra: "2026-11-23", lienHe: contact,
+      thuCung: [
+        {
+          tenThuCung: "Miu", loaiPet: "MEO", canNangKhaiBao: 5, vaccinationFileKey: "miu-vaccine",
+          dichVu: [{ maDichVu: 11, maKhungGio: 704 }],
+        },
+        {
+          tenThuCung: "Mây", loaiPet: "CHO", canNangKhaiBao: 6,
+          dichVu: [{ maDichVu: 12, maKhungGio: 701 }],
+        },
+      ],
+      ghiChu: "Gọi khi tới",
+    });
+  });
+
+  it("maps the legacy booking form to the public endpoint and projects booking aliases for its callers", async () => {
+    const vaccine = new File(["vaccination record"], "vaccine.png", { type: "image/png" });
+    const payload = {
+      requestId, maKhungGio: 701, shiftId: 1, date: "2026-11-23", checkout: "2026-11-25",
+      customer: { name: contact.hoTen, phone: "090-123 4567", email: contact.email },
+      pets: [
+        {
+          name: "Miu", species: "MEO", breed: "Mèo ta", coatType: "SHORT", weight: 5,
+          type: "SPA", serviceId: 11, comboId: null, roomId: 8, notes: "Dị ứng",
+          vaccine, vaccinationFileKey: "miu-vaccine",
+        },
+        { name: "Mây", species: "CHO", weight: 6, type: "COMBO_SPA_HOTEL", comboId: 12, roomId: 9 },
+        { name: "Tít", species: "CHO", weight: 4, type: "HOTEL", serviceId: 11, roomId: 10, vaccine },
+      ],
+      actor: 1, estimatedPrice: 100000, trangThai: "CONFIRMED",
+    };
+
+    const result = await callOperation("createBooking", payload);
+
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const [config] = adapter.mock.calls[0];
+    expect(config).toMatchObject({ method: "post", url: "/bookings" });
+    expect(JSON.parse(config.data.get("payload"))).toEqual({
+      requestId, maKhungGio: 701, ngayTra: "2026-11-25", lienHe: contact,
+      thuCung: [
+        {
+          tenThuCung: "Miu", loaiPet: "MEO", giong: "Mèo ta", loaiLong: "SHORT",
+          canNangKhaiBao: 5, ghiChuDiUng: "Dị ứng", dichVu: [{ maDichVu: 11, maKhungGio: 701 }],
+          vaccinationFileKey: "miu-vaccine",
+        },
+        {
+          tenThuCung: "Mây", loaiPet: "CHO", canNangKhaiBao: 6, maLoaiPhong: 9,
+          dichVu: [{ maCombo: 12, maKhungGio: 701 }],
+        },
+        {
+          tenThuCung: "Tít", loaiPet: "CHO", canNangKhaiBao: 4, maLoaiPhong: 10,
+          dichVu: [], vaccinationFileKey: "vaccination-2",
+        },
+      ],
+    });
+    expect(config.data.get("miu-vaccine")).toBe(vaccine);
+    expect(config.data.get("vaccination-2")).toBe(vaccine);
+    expect(result).toMatchObject({
+      ...envelope, data: {
+        ...booking, id: 101, date: "2026-11-23", tongTienTamTinh: 110000,
+        chiTietDonList: [{ id: 15 }],
+      },
+    });
+  });
+
+  it.each([
+    [{ date: "2026-11-23", shiftId: 1 }, "maKhungGio", "MISSING_SLOT_MAPPING"],
+    [{
+      maKhungGio: 701, lienHe: contact,
+      thuCung: [{ dichVu: [{ maDichVu: 11, maKhungGio: 0 }] }],
+    }, "thuCung[0].dichVu[0].maKhungGio", "MISSING_SLOT_MAPPING"],
+    [{
+      maKhungGio: 701, lienHe: contact, thuCung: [{ dichVu: [{ maDichVu: 11, maCombo: 12 }] }],
+    }, "thuCung[0].dichVu[0]", "VALIDATION_FAILED"],
+    [{
+      maKhungGio: 701, lienHe: contact, thuCung: [{ dichVu: [{}] }],
+    }, "thuCung[0].dichVu[0]", "VALIDATION_FAILED"],
+    [{
+      maKhungGio: 701, customer: { phone: "090.123.4567" },
+    }, "soDienThoai", "VALIDATION_FAILED"],
+    [{
+      maKhungGio: 701, lienHe: contact,
+      thuCung: [{ vaccinationFileKey: "missing-vaccine", dichVu: [{ maDichVu: 11 }] }],
+    }, "thuCung[0].vaccinationFileKey", "VALIDATION_FAILED"],
+  ])("rejects invalid booking input for %j before sending HTTP", async (payload, field, errorCode) => {
+    await expect(callOperation("createBooking", payload, true)).rejects.toMatchObject({
+      success: false, data: null, errorCode, errors: [{ field, message: expect.any(String) }],
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["confirmBooking", { bookingId: 101, id: 999 }, "confirm", {}],
+    ["cancelBooking", { bookingId: 101, loaiHuy: "STAFF_CANCELLED", lyDo: "Khách gọi xin hủy" },
+      "cancel", { loaiHuy: "STAFF_CANCELLED", lyDo: "Khách gọi xin hủy" }],
+    ["reviewBooking", { id: 101, decision: "CONFIRMED" }, "confirm", {}],
+    ["reviewBooking", { id: 101, decision: "CANCELLED", reason: "Không đủ chỗ" },
+      "cancel", { loaiHuy: "STAFF_REJECTED", lyDo: "Không đủ chỗ" }],
+  ])("maps %s with %j to the internal %s command", async (action, input, route, fields) => {
+    const randomUUID = vi.spyOn(crypto, "randomUUID");
+    const payload = { requestId, ...input, actor: 1, trangThai: "READY", estimatedPrice: 10000 };
+
+    const result = await callOperation(action, payload);
+
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const [config] = adapter.mock.calls[0];
+    expect(config).toMatchObject({ method: "post", url: `/internal/bookings/101/${route}` });
+    expect(JSON.parse(config.data)).toEqual({ requestId, ...fields });
+    expect(payload.requestId).toBe(requestId);
+    expect(randomUUID).not.toHaveBeenCalled();
+    if (action === "reviewBooking") {
+      expect(result.data).toMatchObject({ ...booking, id: 101 });
+    } else {
+      expect(result).toEqual(envelope);
+    }
+  });
+
+  it.each([
+    ["reviewBooking", { id: 101, decision: "REJECTED", reason: "Không đủ chỗ" }, "decision"],
+    ["reviewBooking", { id: 101, decision: "CANCELLED", reason: "  " }, "lyDo"],
+    ["cancelBooking", { bookingId: 101, loaiHuy: "STAFF_CANCELLED" }, "lyDo"],
+    ["confirmBooking", { bookingId: 0 }, "bookingId"],
+  ])("rejects invalid %s input %j before sending HTTP", async (action, payload, field) => {
+    await expect(callOperation(action, payload)).rejects.toMatchObject({
+      success: false, data: null, errorCode: "VALIDATION_FAILED",
+      errors: [{ field, message: expect.any(String) }],
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it("retains the generated request ID on the same payload across a caller-initiated retry", async () => {
+    const randomUUID = vi.spyOn(crypto, "randomUUID").mockReturnValue(requestId);
+    const payload = {
+      maKhungGio: 701, ngayTra: "2026-11-23", lienHe: contact,
+      thuCung: [{
+        tenThuCung: "Miu", loaiPet: "MEO", canNangKhaiBao: 5, dichVu: [{ maDichVu: 11 }],
+      }],
+    };
+    adapter.mockImplementationOnce(async (config) => {
+      throw new AxiosError("Timeout", AxiosError.ECONNABORTED, config);
+    });
+
+    await expect(callOperation("createBooking", payload, true)).rejects.toMatchObject({ success: false });
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(payload.requestId).toBe(requestId);
+
+    await expect(callOperation("createBooking", payload, true)).resolves.toEqual(envelope);
+    expect(adapter).toHaveBeenCalledTimes(2);
+    expect(randomUUID).toHaveBeenCalledTimes(1);
+    for (const [config] of adapter.mock.calls) {
+      expect(JSON.parse(config.data.get("payload")).requestId).toBe(requestId);
+    }
+  });
+});
