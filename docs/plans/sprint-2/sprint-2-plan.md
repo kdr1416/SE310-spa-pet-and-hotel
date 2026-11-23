@@ -802,7 +802,7 @@ flowchart TD
     1. `catalog` / `getCatalog` (`E02 GET /api/catalog`) đọc catalog. `checkAvailability` (`E03 POST /api/availability`) gửi truy vấn công suất theo contract. Projection cho alias UI giữ các trường contract đi kèm.
     2. `createBooking` (`E04 POST /api/bookings`) gửi `FormData` gồm JSON `BookingCreate` trong field `"payload"` và file tiêm chủng nếu có. Dùng `maKhungGio` thật hoặc ánh xạ đã xác minh, chép ID xuống từng `ServiceSelection.maKhungGio`. Thiếu ánh xạ trả `MISSING_SLOT_MAPPING` trước HTTP. `shiftId`/`maCa` chỉ định ca hiển thị.
     3. `lookupBooking` / `lookupTracking` (`E08 POST /api/tracking/lookup`) gửi `trackingCode` và `soDienThoai ?? phone` đã chuẩn hóa thành 10 chữ số ASCII.
-    4. `getWorkspace` / `listBookings` (`E10a GET /api/internal/bookings`) mặc định lấy trang 1 với `kichThuocTrang=100`, giữ `trang`, `kichThuocTrang`, `tongSo`. `getWorkspace.users` rỗng ở Phase 1.
+    4. Với `E10a GET /api/internal/bookings`, `getWorkspace` mặc định yêu cầu 100 đơn mỗi trang. `listBookings` chuyển tiếp tham số của caller. Khi bỏ qua phân trang, backend mặc định trả trang 1 với 20 đơn. Cả hai giữ `trang`, `kichThuocTrang`, `tongSo`. `getWorkspace.users` rỗng ở Phase 1.
     5. `reviewBooking` / `confirmBooking` / `cancelBooking` (`E11` & `E12`):
        - `confirmBooking` hoặc `reviewBooking` với `decision === "CONFIRMED"` $\rightarrow$ `POST /api/internal/bookings/{id}/confirm` (`{ requestId }`).
        - `cancelBooking` hoặc `reviewBooking` với `decision === "CANCELLED"` $\rightarrow$ `POST /api/internal/bookings/{id}/cancel` (`{ requestId, loaiHuy: payload.loaiHuy ?? "STAFF_REJECTED", lyDo: payload.lyDo ?? payload.reason }`).

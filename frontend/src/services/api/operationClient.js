@@ -1,5 +1,6 @@
 import { IS_MOCK_ENABLED } from "./httpClient";
 import { mockCall } from "../mock/mockRepository";
+import { getStoredLiveRoleForDemoActor } from "../../stores/auth";
 import {
   callSprint1Operation,
   isSprint1Mutation,
@@ -46,19 +47,24 @@ export async function callOperation(action, payload = {}, isPublic = false) {
   }
 
   let actor = null;
+  let expectedRole;
   if (!isPublic) {
     try {
       actor = JSON.parse(
         sessionStorage.getItem("petspa_mock_session") || "null",
       )?.id;
+      if (!IS_MOCK_ENABLED) expectedRole = getStoredLiveRoleForDemoActor(actor);
     } catch {
       actor = null;
     }
-    if (!actor || (!IS_MOCK_ENABLED && actor !== 1 && actor !== 2)) {
+    if (!actor || (!IS_MOCK_ENABLED && !expectedRole)) {
+      if (!IS_MOCK_ENABLED) sessionStorage.removeItem("petspa_mock_session");
       throw new Error("Vui lòng đăng nhập lại.");
     }
   }
-  const data = await mockCall(action, payload, actor);
+  const data = expectedRole
+    ? await mockCall(action, payload, actor, { expectedRole })
+    : await mockCall(action, payload, actor);
   if (!isPublic && !action.startsWith("get")) {
     notifyWorkspaceUpdated();
   }

@@ -12,7 +12,7 @@ function normalizeLiveUser(rawUser) {
   const vaiTro = rawUser.vaiTro ?? rawUser.role;
   const permissions = rawUser.quyen ?? rawUser.permissions;
   const quyen = Array.isArray(permissions) ? permissions : [];
-  const dangHoatDong = rawUser.dangHoatDong ?? rawUser.isActive ?? true;
+  const { isActive = true, dangHoatDong = isActive } = rawUser;
   return {
     ...rawUser,
     maNhanVien,
@@ -33,14 +33,29 @@ function hasValidSession(token, user) {
     typeof token === "string" &&
     !!token.trim() &&
     ["ADMIN", "STAFF"].includes(user?.vaiTro) &&
-    user.isActive !== false
+    user.isActive === true
   );
+}
+
+function demoActorId(user) {
+  return user.vaiTro === "ADMIN" ? 1 : 2;
+}
+
+function readStoredLiveSession() {
+  const token = localStorage.getItem("petspa_auth_token");
+  const user = normalizeLiveUser(JSON.parse(localStorage.getItem("petspa_auth_user") || "null"));
+  return hasValidSession(token, user) ? { token, user } : null;
+}
+
+export function getStoredLiveRoleForDemoActor(actorId) {
+  const session = readStoredLiveSession();
+  return session && actorId === demoActorId(session.user) ? session.user.vaiTro : null;
 }
 
 function syncDemoSession(user) {
   sessionStorage.setItem(
     "petspa_mock_session",
-    JSON.stringify({ id: user.vaiTro === "ADMIN" ? 1 : 2 }),
+    JSON.stringify({ id: demoActorId(user) }),
   );
 }
 
@@ -107,7 +122,7 @@ export const useAuthStore = defineStore("auth", {
             tenDangNhap,
             matKhau,
           });
-          if (!res.success) throw new Error(res.message);
+          if (!res.success) throw res;
 
           const token = res.data?.accessToken ?? res.data?.token;
           const user = normalizeLiveUser(res.data?.nhanVien ?? res.data?.user);
@@ -124,7 +139,7 @@ export const useAuthStore = defineStore("auth", {
       } catch (e) {
         this.logout();
         this.error = e.message;
-        return { success: false, message: e.message };
+        return e.success === false ? e : { success: false, message: e.message };
       } finally {
         this.loading = false;
       }
@@ -140,18 +155,15 @@ export const useAuthStore = defineStore("auth", {
             : null;
           this.token = this.user ? "mock-session" : null;
         } else {
-          const token = localStorage.getItem("petspa_auth_token");
-          const user = normalizeLiveUser(
-            JSON.parse(localStorage.getItem("petspa_auth_user") || "null"),
-          );
-          if (!hasValidSession(token, user)) {
+          const session = readStoredLiveSession();
+          if (!session) {
             this.logout();
             return;
           }
 
-          syncDemoSession(user);
-          this.user = user;
-          this.token = token;
+          syncDemoSession(session.user);
+          this.user = session.user;
+          this.token = session.token;
         }
       } catch {
         this.logout();

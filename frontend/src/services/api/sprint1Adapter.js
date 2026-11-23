@@ -18,14 +18,18 @@ async function projectResponse(request, project) {
   return { ...envelope, data: project(envelope.data) };
 }
 
+function minimumSizePrice(prices) {
+  return prices?.length ? Math.min(...prices.map(({ donGia }) => donGia)) : null;
+}
+
 function projectCatalog(catalog) {
   return {
     ...catalog,
     services: catalog.dichVu.map((service) => ({
-      ...service, id: service.maDichVu, isActive: service.dangHoatDong,
+      ...service, id: service.maDichVu, isActive: service.dangHoatDong, giaCoBan: minimumSizePrice(service.bangGia),
     })),
     combos: catalog.combo.map((combo) => ({
-      ...combo, id: combo.maCombo, isActive: combo.dangHoatDong,
+      ...combo, id: combo.maCombo, isActive: combo.dangHoatDong, giaCombo: minimumSizePrice(combo.bangGia),
     })),
     rooms: catalog.loaiPhong.map((room) => ({
       ...room, id: room.maLoaiPhong, isActive: room.dangHoatDong, giaTheoNgay: room.giaMoiDem,
@@ -361,7 +365,7 @@ function toCheckinDto(payload) {
 function checkInPet(payload, isUiAlias = false) {
   const petId = requirePetDetailId(payload, isUiAlias);
   const photo = payload.anhTiepNhan;
-  if (!(photo instanceof File)) {
+  if (!(photo instanceof File) || photo.size === 0) {
     throw validationError("anhTiepNhan", "Cần ảnh lúc tiếp nhận thú cưng.");
   }
   const request = postCareMultipart(

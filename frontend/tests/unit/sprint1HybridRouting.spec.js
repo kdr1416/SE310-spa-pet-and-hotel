@@ -329,6 +329,9 @@ describe("live session and permissions", () => {
     ["missing employee ID", JSON.stringify({ vaiTro: "STAFF" })],
     ["unsupported role", JSON.stringify({ ...employee, vaiTro: "UNKNOWN" })],
     ["inactive employee", JSON.stringify({ ...employee, dangHoatDong: false, isActive: true })],
+    ["string activity", JSON.stringify({ ...employee, dangHoatDong: "false" })],
+    ["numeric legacy activity", JSON.stringify({ id: 8, role: "STAFF", isActive: 1 })],
+    ["null activity", JSON.stringify({ ...employee, dangHoatDong: null })],
   ])("clears a stored session with %s", async (_case, storedUser) => {
     localStorage.setItem("petspa_auth_token", "test-access-token");
     if (storedUser !== null) localStorage.setItem("petspa_auth_user", storedUser);
@@ -352,6 +355,25 @@ describe("live session and permissions", () => {
     expectLoggedOut();
   });
 
+  it.each([401, 200])("preserves the E01 failure envelope and clears the session for HTTP %i", async (status) => {
+    persistUser(employee);
+    await auth.initAuth();
+    const failure = {
+      success: false, data: null, message: "Đăng nhập không thành công.",
+      errorCode: "INVALID_CREDENTIALS", traceId: "test-login-trace",
+      errors: [{ field: "tenDangNhap", message: "Thông tin đăng nhập không hợp lệ." }],
+    };
+    liveHttpClient.defaults.adapter = async (config) => {
+      const response = { config, data: failure, status, statusText: "", headers: {} };
+      if (status === 401) throw new AxiosError(failure.message, AxiosError.ERR_BAD_REQUEST, config, {}, response);
+      return response;
+    };
+
+    expect(await auth.login("staff-test", "test-password")).toEqual(failure);
+    expect(auth.error).toBe(failure.message);
+    expectLoggedOut();
+  });
+
   it("clears all identity storage after a rejected login", async () => {
     persistUser(employee);
     await auth.initAuth();
@@ -364,10 +386,7 @@ describe("live session and permissions", () => {
       });
     };
 
-    expect(await auth.login("staff-test", "test-password")).toEqual({
-      success: false,
-      message: failure.message,
-    });
+    expect(await auth.login("staff-test", "test-password")).toEqual(failure);
     expectLoggedOut();
   });
 
@@ -553,8 +572,8 @@ describe("Sprint 1 reads", () => {
       ...envelope,
       data: {
         ...catalog,
-        services: [{ ...catalog.dichVu[0], id: 11, isActive: false }],
-        combos: [{ ...catalog.combo[0], id: 12, isActive: true }],
+        services: [{ ...catalog.dichVu[0], id: 11, isActive: false, giaCoBan: 100000 }],
+        combos: [{ ...catalog.combo[0], id: 12, isActive: true, giaCombo: 150000 }],
         rooms: [{ ...catalog.loaiPhong[0], id: 13, isActive: true, giaTheoNgay: 250000 }],
         shifts: [{ tenCa: "Ca Sáng" }, { tenCa: "Ca Chiều" }],
         availability: [],
@@ -562,6 +581,61 @@ describe("Sprint 1 reads", () => {
     });
     expect(result.data.shifts.every((shift) => !("slotPetMacDinh" in shift))).toBe(true);
     expect(catalog.dichVu[0]).not.toHaveProperty("id");
+    expect(catalog.dichVu[0]).not.toHaveProperty("giaCoBan");
+    expect(catalog.combo[0]).not.toHaveProperty("giaCombo");
+  });
+
+  const bands = [
+    { maSize: "S", tuKg: 0, denKg: 6 }, { maSize: "M", tuKg: 6, denKg: 14 },
+    { maSize: "L", tuKg: 14, denKg: 26 }, { maSize: "XL", tuKg: 26, denKg: null },
+  ];
+  const pricedCatalog = {
+    ...catalog,
+    khoangSize: bands,
+    dichVu: [{ ...catalog.dichVu[0], dangHoatDong: true, bangGia: [
+      { maSize: "XL", donGia: 219000 }, { maSize: "M", donGia: 126000 },
+      { maSize: "L", donGia: 178000 }, { maSize: "S", donGia: 99000 },
+    ] }],
+    combo: [{ ...catalog.combo[0], bangGia: [
+      { maSize: "M", donGia: 233000 }, { maSize: "S", donGia: 175000 },
+      { maSize: "XL", donGia: 412000 }, { maSize: "L", donGia: 309000 },
+    ] }],
+  };
+
+  it("renders the minimum service and combo prices on ServiceCard and preserves the nightly room label", async () => {
+    const { mount } = await import("@vue/test-utils");
+    const { default: ServiceCard } = await import("../../src/components/public/ServiceCard.vue");
+    respondWith(pricedCatalog);
+    const { data } = await callOperation("catalog", {}, true);
+
+    for (const [category, price, label] of [
+      ["Spa", data.services[0].giaCoBan, "Từ 99.000 ₫"],
+      ["Combo", data.combos[0].giaCombo, "Từ 175.000 ₫"],
+      ["Hotel", data.rooms[0].giaTheoNgay, "250.000 ₫ / đêm"],
+    ]) {
+      const card = mount(ServiceCard, { props: { item: { category, price } } });
+      expect(card.get(".font-bold").text().replace(/\s+/g, " ")).toBe(label);
+      card.unmount();
+    }
+  });
+
+  it.each([
+    [5.9, 99000, 175000], [6, 126000, 233000], [14, 178000, 309000],
+    [26, 219000, 412000], [90, 219000, 412000],
+  ])("estimates actual E02 service and combo prices for %s kg", async (weight, servicePrice, comboPrice) => {
+    const { estimatePet } = await import("../../src/utils/pricing");
+    respondWith(pricedCatalog);
+    const { data } = await callOperation("catalog", {}, true);
+    const pet = { type: "SPA", weight };
+    expect.soft(estimatePet({ ...pet, serviceId: 11 }, "2026-11-23", data).amount).toBe(servicePrice);
+    expect.soft(estimatePet({ ...pet, comboId: 12 }, "2026-11-23", data).amount).toBe(comboPrice);
+  });
+
+  it("rejects a live estimate when the selected size has no catalog price", async () => {
+    const { estimatePet } = await import("../../src/utils/pricing");
+    respondWith({ ...pricedCatalog, combo: catalog.combo });
+    const { data } = await callOperation("catalog", {}, true);
+    expect(() => estimatePet({ type: "SPA", weight: 14, comboId: 12 }, "2026-11-23", data)).toThrow();
   });
 
   it("posts Spa demand with the supplied booking and distinct service slot IDs", async () => {
@@ -1156,6 +1230,7 @@ describe("live care and billing commands", () => {
 
     it.each([
       [{ anhTiepNhan: undefined }, "anhTiepNhan"],
+      [{ anhTiepNhan: new File([], "empty.png", { type: "image/png" }) }, "anhTiepNhan"],
       [{ ghiChuSucKhoe: " " }, "ghiChuSucKhoe"],
       [{ maNhanVien: undefined }, "maNhanVien"],
       [{ quyetDinhGia: undefined }, "quyetDinhGia"],
@@ -1358,6 +1433,11 @@ describe("hybrid-policy", () => {
     sessionStorage.setItem("petspa_mock_session", JSON.stringify({ id }));
   }
 
+  function setLiveIdentity(role) {
+    localStorage.setItem("petspa_auth_token", "test-live-token");
+    localStorage.setItem("petspa_auth_user", JSON.stringify({ maNhanVien: 9, vaiTro: role, dangHoatDong: true }));
+  }
+
   function respondWith(data, envelope = { success: true, data, message: "Thành công" }) {
     adapter.mockImplementation(async (config) => ({
       config, data: envelope, status: 200, statusText: "", headers: {},
@@ -1443,12 +1523,14 @@ describe("hybrid-policy", () => {
     "uses the stored demo actor for %s", async (action, demoId, resultKey) => {
       await startClient();
       setDemoActor(demoId);
+      const expectedRole = demoId === 1 ? "ADMIN" : "STAFF";
+      setLiveIdentity(expectedRole);
 
       const result = await callOperation(action);
 
       expect(result.success).toBe(true);
       expect(result.data).toHaveProperty(resultKey);
-      expect(mockCall).toHaveBeenCalledExactlyOnceWith(action, {}, demoId);
+      expect(mockCall).toHaveBeenCalledExactlyOnceWith(action, {}, demoId, { expectedRole });
       expect(adapter).not.toHaveBeenCalled();
       expectWorkspaceSignals(0);
     },
@@ -1473,7 +1555,7 @@ describe("hybrid-policy", () => {
     const result = await callOperation("getSchedule");
 
     expect(result.data.users).toMatchObject([{ id: 2, vaiTro: "STAFF" }]);
-    expect(mockCall).toHaveBeenCalledExactlyOnceWith("getSchedule", {}, 2);
+    expect(mockCall).toHaveBeenCalledExactlyOnceWith("getSchedule", {}, 2, { expectedRole: "STAFF" });
     expect(adapter).toHaveBeenCalledTimes(1);
     expect(auth.user).toBe(identity);
     expect(auth.user).toMatchObject({ ...staff, id: 1, role: "STAFF" });
@@ -1485,6 +1567,7 @@ describe("hybrid-policy", () => {
   it.each([null, "{", '{"id":3}', '{"id":"2"}'])(
     "rejects a private demo fallback with invalid stored session %j", async (session) => {
       await startClient();
+      setLiveIdentity("STAFF");
       if (session !== null) sessionStorage.setItem("petspa_mock_session", session);
 
       await expect(callOperation("getSchedule")).rejects.toMatchObject({
@@ -1497,13 +1580,35 @@ describe("hybrid-policy", () => {
     },
   );
 
+  it.each([
+    ["logout", () => localStorage.clear()],
+    ["role change", () => setLiveIdentity("STAFF")],
+    ["missing token", () => localStorage.removeItem("petspa_auth_token")],
+    ["invalid activity", () => localStorage.setItem("petspa_auth_user", JSON.stringify({
+      maNhanVien: 9, vaiTro: "ADMIN", dangHoatDong: "false",
+    }))],
+  ])("revokes this tab's stale demo context after a shared-session %s", async (_name, changeSession) => {
+    await startClient();
+    setLiveIdentity("ADMIN");
+    setDemoActor(1);
+    changeSession();
+    const sharedUser = localStorage.getItem("petspa_auth_user");
+
+    await expect(callOperation("currentUser")).rejects.toThrow("Vui lòng đăng nhập lại.");
+    expect(sessionStorage.getItem("petspa_mock_session")).toBeNull();
+    expect(localStorage.getItem("petspa_auth_user")).toBe(sharedUser);
+    expect(mockCall).not.toHaveBeenCalled();
+    expectWorkspaceSignals(0);
+  });
+
   it("lets demo operations reject an unknown action without sending HTTP", async () => {
     await startClient();
     setDemoActor(1);
+    setLiveIdentity("ADMIN");
 
     await expect(callOperation("unknownOperation")).rejects.toThrow("Thao tác chưa được hỗ trợ.");
 
-    expect(mockCall).toHaveBeenCalledExactlyOnceWith("unknownOperation", {}, 1);
+    expect(mockCall).toHaveBeenCalledExactlyOnceWith("unknownOperation", {}, 1, { expectedRole: "ADMIN" });
     expect(adapter).not.toHaveBeenCalled();
     expectWorkspaceSignals(0);
   });
@@ -1608,6 +1713,7 @@ describe("hybrid-policy", () => {
   it("signals completion of a demo settings mutation without sending HTTP", async () => {
     await startClient();
     setDemoActor(1);
+    setLiveIdentity("ADMIN");
     const policy = { SPA: false, HOTEL: true, COMBO_SPA_HOTEL: true };
 
     await expect(callOperation("updateVaccinePolicy", { policy })).resolves.toMatchObject({
@@ -1615,9 +1721,64 @@ describe("hybrid-policy", () => {
     });
 
     expect(seed.settings.vaccinePolicy).toEqual(policy);
-    expect(mockCall).toHaveBeenCalledExactlyOnceWith("updateVaccinePolicy", { policy }, 1);
+    expect(mockCall).toHaveBeenCalledExactlyOnceWith("updateVaccinePolicy", { policy }, 1, { expectedRole: "ADMIN" });
     expect(adapter).not.toHaveBeenCalled();
     expectWorkspaceSignals(1);
+  });
+});
+
+describe("live demo repository guard", () => {
+  beforeEach(() => {
+    vi.stubEnv("VITE_USE_MOCK_API", "false");
+    vi.resetModules();
+    sessionStorage.setItem("petspa_mock_session", JSON.stringify({ id: 2 }));
+    localStorage.setItem("petspa_auth_token", "test-live-token");
+    localStorage.setItem("petspa_auth_user", JSON.stringify({ maNhanVien: 19, vaiTro: "STAFF", dangHoatDong: true }));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it.each([
+    ["promoted", { vaiTro: "ADMIN" }],
+    ["malformed activity", { isActive: "false" }],
+  ])("rejects a %s seed actor in the operation transaction", async (_case, change) => {
+    const { createSeed } = await import("../../src/services/mock/seed");
+    const state = createSeed({ demo: true });
+    // Model the queued IndexedDB read and its commit/abort callbacks. The real
+    // repository performs the guard and executes the command against this snapshot.
+    const get = () => {
+      const request = { result: structuredClone(state) };
+      queueMicrotask(() => request.onsuccess());
+      return request;
+    };
+    const put = vi.fn(() => queueMicrotask(() => tx.oncomplete()));
+    const tx = {
+      objectStore: () => ({ get, put }),
+      abort: () => queueMicrotask(() => tx.onabort()),
+    };
+    const transaction = vi.fn(() => tx);
+    vi.stubGlobal("indexedDB", { open: () => {
+      const request = { result: { transaction } };
+      queueMicrotask(() => request.onsuccess());
+      return request;
+    } });
+    const { callOperation } = await import("../../src/services/api/operationClient");
+
+    await expect(callOperation("currentUser")).resolves.toMatchObject({
+      success: true, data: { id: 2, vaiTro: "STAFF", isActive: true },
+    });
+    transaction.mockClear();
+    put.mockClear();
+    Object.assign(state.users.find((user) => user.id === 2), change);
+    await expect(callOperation("currentUser")).rejects.toThrow();
+    expect(transaction).toHaveBeenCalledTimes(1);
+    expect(put).not.toHaveBeenCalled();
   });
 });
 
@@ -1717,6 +1878,9 @@ describe("notifications", () => {
     dispatchWorkspaceUpdate();
     await vi.advanceTimersByTimeAsync(300);
     expect(getWorkspace).toHaveBeenCalledTimes(1);
+    await expect(getWorkspace.mock.results[0].value).resolves.toMatchObject({
+      success: true, data: { bookings: [], trang: 1, kichThuocTrang: 100, tongSo: 0 },
+    });
 
     await vi.advanceTimersByTimeAsync(600);
     expect(getWorkspace).toHaveBeenCalledTimes(1);
