@@ -6,8 +6,9 @@
     <p v-if="unsupported" class="muted">Hotel/Combo chưa hỗ trợ thao tác ở màn hình này.</p>
     <form v-if="!unsupported && booking.trangThai === 'PENDING' && auth.can('BOOKING_APPROVE')" class="panel space-y-3" @submit.prevent="review('CONFIRMED')">
       <label class="label">Lý do từ chối (nếu từ chối)<textarea v-model="rejection" class="field" :disabled="locked" maxlength="1000" /></label>
-      <button class="btn-primary" :disabled="busy || intakeUncertain" type="submit">Xác nhận đơn</button>
-      <button class="btn ml-3" :disabled="busy || intakeUncertain" type="button" @click="review('CANCELLED')">Từ chối đơn</button>
+      <button v-if="!reviewUncertain" class="btn-primary" :disabled="busy || intakeUncertain" type="submit">Xác nhận đơn</button>
+      <button v-if="!reviewUncertain" class="btn ml-3" :disabled="busy || intakeUncertain" type="button" @click="review('CANCELLED')">Từ chối đơn</button>
+      <button v-if="reviewUncertain" class="btn-primary" :disabled="busy || intakeUncertain" type="button" @click="review(reviewDecision)">{{ reviewDecision === 'CONFIRMED' ? 'Thử lại xác nhận đơn' : 'Thử lại từ chối đơn' }}</button>
     </form>
     <p v-if="reviewUncertain || intakeUncertain" role="status">Chưa rõ kết quả. Thử lại cùng yêu cầu trước khi thao tác khác.</p>
     <article v-for="pet in booking.thuCung" :key="pet.maChiTietDon" class="panel space-y-3">
@@ -55,6 +56,7 @@ const { busy: intakeBusy, uncertain: intakeUncertain } = intake, { busy: reviewB
 const busy = computed(() => intakeBusy.value || reviewBusy.value), locked = computed(() => busy.value || intakeUncertain.value || reviewUncertain.value);
 const unsupported = computed(() => props.booking.thuCung.some(pet => pet.maLoaiPhong != null || pet.dichVu.some(service => service.maCombo != null)));
 const error = ref(""), errors = ref([]), errorSummary = ref(null), message = ref(""), rejection = ref("");
+const reviewDecision = ref(null);
 const intakePet = ref(null), shifts = ref([]), fur = ref([]), employees = ref([]), maCa = ref(""), loading = ref(false);
 let day = "", employeeSequence = 0;
 const blank = () => ({ canNangThucTe: null, tinhTrangLong: "", maNhanVien: "", ghiChuSucKhoe: "", quyetDinhGia: "", noiDungThuGon: "", xacNhanKhach: false, xacNhanGiayHopLe: false, maHoSoTiemChung: "", anhTiepNhan: null });
@@ -102,14 +104,16 @@ async function checkIn() {
       noiDungThuGon: f.quyetDinhGia === "THU_GON" ? f.noiDungThuGon : undefined }, bookingService.checkInPet);
     intakePet.value = null; message.value = "Đã tiếp nhận thú cưng."; error.value = "";
     emit("changed", { trangThai: "IN_PROGRESS", pet: response.data });
-  } catch (e) { await showError(e); if (["FORBIDDEN", "INVALID_TRANSITION"].includes(e.errorCode)) emit("changed", { trangThai: props.booking.trangThai }); if (e.errorCode === "VALIDATION_FAILED") await loadReferences(); }
+  } catch (e) { await showError(e); if (["FORBIDDEN", "INVALID_TRANSITION", "ASSIGNMENT_UNAVAILABLE"].includes(e.errorCode)) emit("changed", { trangThai: props.booking.trangThai }); if (["VALIDATION_FAILED", "ASSIGNMENT_UNAVAILABLE"].includes(e.errorCode)) await loadReferences(); }
   finally { emit("busy", locked.value); }
 }
 async function review(decision) {
   if (busy.value) return;
   try {
+    if (reviewUncertain.value) decision = reviewDecision.value;
     if (decision === "CANCELLED" && !rejection.value.trim() && !reviewUncertain.value) throw new Error("Nhập lý do từ chối.");
     emit("busy", true);
+    reviewDecision.value = decision;
     const response = await approval.run({ bookingId: props.booking.maDon, decision, lyDo: rejection.value || undefined }, bookingService.reviewBooking);
     emit("changed", { trangThai: response.data.trangThai, booking: response.data });
     error.value = "";

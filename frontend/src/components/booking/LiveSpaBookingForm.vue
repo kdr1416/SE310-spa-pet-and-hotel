@@ -56,7 +56,7 @@ const services = computed(() => catalog.value.services.filter(item => item.isAct
 const selected = computed(() => shifts.value.find(shift => shift.maCa === selectedMaCa.value));
 function bookable(shift) {
   if (!shift.moNhanKhach || !Number.isInteger(shift.maKhungGio)) return false;
-  const nowTime = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date());
+  const nowTime = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Ho_Chi_Minh", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date());
   return date.value > vnDate() || (date.value === vnDate() && shift.gioKetThuc > nowTime);
 }
 async function showError(e) { error.value = e.message || "Không thể xử lý yêu cầu."; errors.value = e.errors ?? []; await nextTick(); errorSummary.value?.focus(); }
@@ -93,7 +93,7 @@ async function submit() {
     uncertain.value = false; command = null; emit("created", response.data);
   } catch (e) {
     if (busy.value && (!e.errorCode || e.errorCode === "TEMPORARY_FAILURE")) uncertain.value = true;
-    else if (busy.value) { command = null; availability.value = false; if (["CAPACITY_EXCEEDED", "INVALID_TRANSITION"].includes(e.errorCode)) await loadOptions(); }
+    else if (busy.value) { uncertain.value = false; command = null; availability.value = false; if (["CAPACITY_EXCEEDED", "INVALID_TRANSITION"].includes(e.errorCode)) await loadOptions(); }
     await showError(e);
   } finally { busy.value = false; }
 }

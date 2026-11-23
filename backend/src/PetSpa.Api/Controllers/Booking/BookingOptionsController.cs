@@ -16,6 +16,6 @@ public sealed class BookingOptionsController(BookingOptionsService options) : Co
         var response = await options.GetAsync(query.Ngay!.Value, cancellationToken);
         if (response.Success) return Ok(response);
         response.TraceId = HttpContext.TraceIdentifier;
-        return BadRequest(response);
+        return StatusCode(response.ErrorCode == "TEMPORARY_FAILURE" ? 503 : 400, response);
     }
 }

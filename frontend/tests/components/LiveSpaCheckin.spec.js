@@ -45,3 +45,19 @@ it("never invents consent, health or current assignee and retains inputs after f
   expect(wrapper.get('[role="alert"]').text()).toContain("Chọn lại tình trạng lông");
   expect(wrapper.get('[data-testid="health"]').element.value).toBe("Khỏe");
 });
+it("reloads assignment candidates on the canonical stale-assignment conflict", async () => {
+  const wrapper = await open(); await fill(wrapper);
+  api.checkInPet.mockRejectedValueOnce({ errorCode: "ASSIGNMENT_UNAVAILABLE", message: "Phân công đã đổi" });
+  await wrapper.get('[data-testid="checkin-form"]').trigger("submit"); await flushPromises();
+  expect(api.getAssignmentCandidates).toHaveBeenCalledTimes(2);
+  expect(wrapper.get('[data-testid="employee"]').element.value).toBe("");
+});
+it("offers only a labeled retry of the original uncertain booking decision", async () => {
+  useAuthStore().user.quyen = ["BOOKING_APPROVE"];
+  const b = booking(); b.trangThai = "PENDING";
+  api.reviewBooking.mockRejectedValueOnce({ message: "Mất kết nối" });
+  const wrapper = mount(Detail, { props: { booking: b }, global: { plugins: [pinia] } });
+  await wrapper.get("form").trigger("submit"); await flushPromises();
+  expect(wrapper.findAll("button").some(button => button.text() === "Từ chối đơn" && !button.attributes("disabled"))).toBe(false);
+  expect(wrapper.text()).toContain("Thử lại xác nhận đơn");
+});

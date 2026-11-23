@@ -32,6 +32,10 @@ it("creates for READY pets inside IN_PROGRESS booking, uses invoice ID and never
   await wrapper.get('[data-testid="handover-form-301"]').trigger("submit"); await flushPromises();
   expect(api.handoverPet).toHaveBeenCalledWith(expect.objectContaining({ maChiTietDon: 301, xacNhanDaNhan: true }));
   expect(wrapper.emitted("changed").at(-1)[0].trangThai).toBe("IN_PROGRESS");
+  await wrapper.get('[data-testid="handover-consent-302"]').setValue(true);
+  await wrapper.get('[data-testid="handover-form-302"]').trigger("submit"); await flushPromises();
+  expect(api.handoverPet).toHaveBeenCalledTimes(2);
+  expect(wrapper.emitted("changed").at(-1)[0]).toMatchObject({ trangThai: "COMPLETED", reloadOnly: true });
 });
 it("keeps entered money, invoice snapshot and key after errors, with explicit manual retry", async () => {
   const wrapper = await create();
@@ -44,5 +48,25 @@ it("keeps entered money, invoice snapshot and key after errors, with explicit ma
   await wrapper.get('[data-testid="payment-form"]').trigger("submit"); await flushPromises();
   expect(api.checkoutInvoice.mock.calls[1][0]).toEqual(first);
   expect(api.createInvoice).toHaveBeenCalledTimes(1);
+});
+it("blocks payment during E24 and refreshes a rejected amount without losing entered money", async () => {
+  const wrapper = await create(); let resolveRead;
+  api.getInvoice.mockImplementationOnce(() => new Promise(resolve => { resolveRead = resolve; }));
+  await wrapper.get('[data-testid="received"]').setValue("150000"); await wrapper.get('[data-testid="change"]').setValue("0");
+  await wrapper.get('[data-testid="reload-invoice"]').trigger("click");
+  await wrapper.get('[data-testid="payment-form"]').trigger("submit"); await flushPromises();
+  expect(api.checkoutInvoice).not.toHaveBeenCalled();
+  resolveRead({ success: true, data: invoice() }); await flushPromises();
+  api.checkoutInvoice.mockRejectedValueOnce({ errorCode: "AMOUNT_MISMATCH", message: "Số tiền đã thay đổi" });
+  await wrapper.get('[data-testid="payment-form"]').trigger("submit"); await flushPromises();
+  expect(api.getInvoice).toHaveBeenCalledTimes(2);
+  expect(wrapper.get('[data-testid="received"]').element.value).toBe("150000");
+});
+it("permits replacing a revoked invoice, and restricts E24 to the read grant", async () => {
+  const b = booking(); b.hoaDon = invoice("REVOKED");
+  const wrapper = mount(Invoice, { props: { booking: b }, global: { plugins: [pinia] } });
+  expect(wrapper.find('[data-testid="create-invoice"]').exists()).toBe(true);
+  useAuthStore().user.quyen = ["INVOICE_COLLECT"]; await flushPromises();
+  expect(wrapper.find('[data-testid="reload-invoice"]').exists()).toBe(false);
 });
 

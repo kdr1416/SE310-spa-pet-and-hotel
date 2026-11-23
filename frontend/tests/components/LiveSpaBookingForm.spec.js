@@ -15,7 +15,7 @@ beforeEach(() => {
     { maCa: 2, maKhungGio: null, tenCa: "Chiều", gioBatDau: "13:00", gioKetThuc: "17:00", moNhanKhach: false },
   ] } }));
   api.callOperation.mockResolvedValue({ success: true, data: { coTheDat: true } });
-  api.createCustomerBooking.mockResolvedValue({ success: true, data: { trackingCode: "ABCD1234", tongTamTinh: 100, emailSent: false } });
+  api.createCustomerBooking.mockResolvedValue({ success: true, data: { trackingCode: "ABCD1234", tongTamTinh: 100, emailDelivery: "FAILED" } });
 });
 afterEach(() => vi.useRealTimers());
 async function fill(wrapper) {
@@ -70,4 +70,19 @@ it("keeps vaccine File ownership and rejects invalid uploads visibly", async () 
   Object.defineProperty(input.element, "files", { value: [new File(["bad"], "bad.txt", { type: "text/plain" })], configurable: true });
   await input.trigger("change"); await flushPromises();
   expect(wrapper.get('[role="alert"]').text()).toContain("JPEG/PNG/WebP");
+});
+it("unlocks input when an uncertain retry resolves as a definitive capacity rejection", async () => {
+  const wrapper = mount(LiveSpaBookingForm); await fill(wrapper);
+  await wrapper.get('[data-testid="availability"]').trigger("click"); await flushPromises();
+  api.createCustomerBooking.mockRejectedValueOnce({ message: "Mất kết nối" }).mockRejectedValueOnce({ errorCode: "CAPACITY_EXCEEDED", message: "Hết chỗ" });
+  await wrapper.get("form").trigger("submit"); await flushPromises();
+  await wrapper.get("form").trigger("submit"); await flushPromises();
+  expect(wrapper.get('[data-testid="name"]').element.closest("fieldset").disabled).toBe(false);
+  expect(wrapper.get('[data-testid="availability"]').element.closest("fieldset").disabled).toBe(false);
+});
+it("disables a shift at its exact end with the backend TimeOnly seconds format", async () => {
+  vi.setSystemTime(new Date("2035-01-01T05:00:00Z"));
+  api.getBookingOptions.mockResolvedValue({ success: true, data: { ca: [{ maCa: 1, maKhungGio: 701, tenCa: "Sáng", gioBatDau: "08:00:00", gioKetThuc: "12:00:00", moNhanKhach: true }] } });
+  const wrapper = mount(LiveSpaBookingForm); await flushPromises();
+  expect(wrapper.get('[data-testid="shift"] option[value="1"]').attributes("disabled")).toBeDefined(); wrapper.unmount();
 });

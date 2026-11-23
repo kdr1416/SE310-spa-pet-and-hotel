@@ -9,3 +9,10 @@ it("retains the logical key after a known rejection, changing it only when input
   await expect(command.run({ invoiceId: 902, amount: 20 }, send)).rejects.toMatchObject({ errorCode: "INVALID_AMOUNT" });
   expect(send.mock.calls[2][0].requestId).not.toBe(send.mock.calls[1][0].requestId);
 });
+it("invalidates in-flight commands on scope reset", async () => {
+  const command = useSpaCommand(); let resolve;
+  const pending = command.run({ id: 1 }, () => new Promise(done => { resolve = done; }));
+  command.reset(); resolve({ success: true, data: { private: true } });
+  await expect(pending).rejects.toMatchObject({ errorCode: "COMMAND_SCOPE_CHANGED" });
+  expect(command.busy.value).toBe(false);
+});

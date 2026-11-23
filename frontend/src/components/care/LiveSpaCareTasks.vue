@@ -45,7 +45,7 @@
   </div>
 </template>
 <script setup>
-import { computed, nextTick, onMounted, onBeforeUnmount, ref } from "vue";
+import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from "vue";
 import { useWorkspaceStore } from "@/stores/workspace";
 import { useAuthStore } from "@/stores/auth";
 import { bookingService } from "@/services/api/bookingService";
@@ -58,6 +58,7 @@ const action = ref(""), note = ref(""), photo = ref(null), logNote = ref(""), lo
 const actionCommand = useSpaCommand(), logCommand = useSpaCommand();
 const { busy: actionBusy, uncertain: actionUncertain } = actionCommand;
 const { busy: logBusy, uncertain: logUncertain } = logCommand;
+watch(() => store.scopeEpoch, () => { selected.value = null; actionCommand.reset(); logCommand.reset(); message.value = ""; error.value = ""; }, { flush: "sync" });
 const locked = computed(() => actionBusy.value || logBusy.value || actionUncertain.value || logUncertain.value);
 const actions = computed(() => ({ WAITING: ["START"], PAUSED: ["RESUME"], IN_PROGRESS: ["PAUSE", "READY"] }[selected.value?.trangThai] ?? []));
 const unsupported = pet => pet.maLoaiPhong != null || pet.dichVu.some(service => service.maCombo != null);
@@ -88,7 +89,7 @@ async function addLog() {
     logNote.value = ""; logPhoto.value = null; error.value = ""; message.value = "Đã lưu nhật ký."; await load();
   } catch (e) { await handleFailure(e); }
 }
-function setPhoto(event, log) { try { const file = event.target.files?.[0]; if (file) validateImage(file); if (log) logPhoto.value = file ?? null; else photo.value = file ?? null; } catch (e) { event.target.value = ""; showError(e); } }
+function setPhoto(event, log) { try { const file = event.target.files?.[0]; if (file) validateImage(file); if (log) logPhoto.value = file ?? null; else photo.value = file ?? null; } catch (e) { if (log) logPhoto.value = null; else photo.value = null; event.target.value = ""; showError(e); } }
 function refresh() { if (!locked.value) load(); }
 onMounted(() => { load(); window.addEventListener("petspa-workspace-updated", refresh); });
 onBeforeUnmount(() => window.removeEventListener("petspa-workspace-updated", refresh));

@@ -14,14 +14,21 @@
   </div>
 </template>
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue';
+import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { Bell } from 'lucide-vue-next';
 import { useAuthStore } from '@/stores/auth';
+import { useWorkspaceStore } from '@/stores/workspace';
 import { bookingService } from '@/services/api/bookingService';
 import { weekdayLabel } from '@/utils/dates';
 const auth = useAuthStore(), router = useRouter(), bookings = ref([]), total = ref(0), open = ref(false), error = ref('');
+const workspace = useWorkspaceStore();
 let timer, refreshTimeout, loading = false;
+let scopeEpoch = 0;
+watch(() => JSON.stringify({
+  id: auth.user?.maNhanVien ?? auth.user?.id, role: auth.user?.vaiTro,
+  active: auth.user?.dangHoatDong ?? auth.user?.isActive, grants: [...(auth.user?.quyen ?? [])].sort(),
+}), () => { scopeEpoch++; bookings.value = []; total.value = 0; open.value = false; }, { flush: 'sync' });
 async function refresh() {
   if (loading || document.hidden) return;
   loading = true;
@@ -31,12 +38,14 @@ async function refresh() {
     if (!auth.isAuthenticated) { bookings.value = []; total.value = 0; await router.replace('/login'); return; }
     if (role !== auth.user.vaiTro) { open.value = false; await router.replace(auth.isAdmin ? '/admin/overview' : '/staff/overview'); }
     if (auth.can('BOOKING_MANAGE')) {
+      const epoch = scopeEpoch;
       const { data } = await bookingService.getWorkspace();
+      if (epoch !== scopeEpoch) return;
       bookings.value = data.bookings.filter((b) => b.trangThai === 'PENDING');
       total.value = data.tongSo ?? bookings.value.length;
     } else { bookings.value = []; total.value = 0; }
     error.value = '';
-  } catch { error.value = 'Không tải được thông báo. Bấm để thử lại.'; }
+  } catch (failure) { if (['FORBIDDEN', 'UNAUTHENTICATED'].includes(failure.errorCode)) { workspace.resetPrivate(); scopeEpoch++; bookings.value = []; total.value = 0; open.value = false; } error.value = 'Không tải được thông báo. Bấm để thử lại.'; }
   finally { loading = false; }
 }
 function debouncedRefresh() {

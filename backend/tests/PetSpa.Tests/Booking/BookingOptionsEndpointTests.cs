@@ -1,7 +1,14 @@
 using System.Net;
+using System.Data.Common;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.AspNetCore.TestHost;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Npgsql;
+using PetSpa.Api.Data;
 using PetSpa.Core.Entities.Scheduling;
 using PetSpa.Tests.Foundation;
 
@@ -9,6 +16,51 @@ namespace PetSpa.Tests.Booking;
 
 public class BookingOptionsEndpointTests
 {
+    [Theory]
+    [InlineData("/api/booking-options?ngay=2035-01-01")]
+    [InlineData("/api/internal/fur-conditions")]
+    [InlineData("/api/internal/care-tasks")]
+    public async Task TransientDatabaseOutageReturnsPublic503(string route)
+    {
+        await using var f = await FoundationTestSupport.CreateAsync(Now);
+        var outage = new ReadOutage();
+        var failures = new FailureTypes();
+        await using var host = f.Host.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.AddDbContext<PetSpaDbContext>(options => options.AddInterceptors(outage));
+            services.AddSingleton<ILoggerProvider>(failures);
+        }));
+        using var client = host.CreateClient(); outage.Enabled = true;
+        using var admin = await f.AdminClientAsync();
+        client.DefaultRequestHeaders.Authorization = admin.DefaultRequestHeaders.Authorization;
+        var response = await client.GetAsync(route);
+        response.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable, $"middleware observed {failures.TypeChain}");
+        (await response.Content.ReadAsStringAsync()).Should().Contain("TEMPORARY_FAILURE").And.NotContain("NpgsqlException");
+    }
+
+    private sealed class FailureTypes : ILoggerProvider, ILogger
+    {
+        public string TypeChain { get; private set; } = "none";
+        public ILogger CreateLogger(string categoryName) => this;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Error;
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (exception is not null) TypeChain = $"{exception.GetType().Name}/{exception.InnerException?.GetType().Name}";
+        }
+        public void Dispose() { }
+    }
+
+    private sealed class ReadOutage : DbCommandInterceptor
+    {
+        public bool Enabled { get; set; }
+        public override ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(DbCommand command,
+            CommandEventData eventData, InterceptionResult<DbDataReader> result, CancellationToken cancellationToken = default)
+        {
+            if (Enabled) throw new NpgsqlException("Test read outage", new TimeoutException());
+            return base.ReaderExecutingAsync(command, eventData, result, cancellationToken);
+        }
+    }
     private static readonly DateTimeOffset Now = DateTimeOffset.Parse("2034-12-31T18:30:00Z");
 
     [Fact]

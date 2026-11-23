@@ -13,7 +13,7 @@
       <p class="muted">
         Lưu lại mã và dùng số điện thoại đăng ký để tra cứu.
         <span v-if="IS_MOCK_ENABLED">Bản mock không gửi email.</span>
-        <span v-else-if="created.emailSent === false">Đã lưu lịch hẹn nhưng chưa gửi được email. Hãy lưu mã tra cứu này.</span>
+        <span v-else-if="created.emailDelivery === 'FAILED'">Đã lưu lịch hẹn nhưng chưa gửi được email. Hãy lưu mã tra cứu này.</span>
       </p>
       <PaymentQrPanel
         v-if="IS_MOCK_ENABLED"

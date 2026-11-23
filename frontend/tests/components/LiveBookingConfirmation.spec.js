@@ -2,7 +2,7 @@
 import { mount } from "@vue/test-utils";
 import { expect, it, vi } from "vitest";
 vi.mock("../../src/services/api/httpClient", () => ({ IS_MOCK_ENABLED: false }));
-vi.mock("../../src/components/booking/BookingForm.vue", () => ({ default: { template: '<button @click="$emit(\'created\', {trackingCode: \'ABCD1234\', emailSent: false})">Đặt</button>' } }));
+vi.mock("../../src/components/booking/BookingForm.vue", () => ({ default: { template: '<button @click="$emit(\'created\', {trackingCode: \'ABCD1234\', emailDelivery: \'FAILED\'})">Đặt</button>' } }));
 import View from "../../src/views/customer/CustomerBookingView.vue";
 it("preserves live tracking and states email failure without generating a mock payment QR", async () => {
   const wrapper = mount(View, { global: { stubs: { RouterLink: { template: '<a><slot /></a>' }, PaymentQrPanel: { template: '<div data-testid="mock-qr" />' } } } });

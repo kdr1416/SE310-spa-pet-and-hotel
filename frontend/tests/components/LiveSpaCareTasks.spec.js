@@ -45,4 +45,14 @@ it("retains the selected snapshot and command after an uncertain result", async 
   await wrapper.get('[data-testid="action-form"]').trigger("submit"); await flushPromises();
   expect(api.performCareAction.mock.calls[1][0].requestId).toBe(first.requestId);
 });
+it("clears a previous photo after an invalid replacement and clears selection on account switch", async () => {
+  api.listCareTasks.mockResolvedValue({ success: true, data: { items: [pet("IN_PROGRESS")], trang: 1, kichThuocTrang: 20, tongSo: 1 } });
+  const wrapper = await open(); await wrapper.get('[data-testid="action"]').setValue("READY");
+  const input = wrapper.get('input[type="file"]');
+  Object.defineProperty(input.element, "files", { value: [new File(["valid"], "ready.jpg", { type: "image/jpeg" })], configurable: true }); await input.trigger("change");
+  Object.defineProperty(input.element, "files", { value: [new File(["invalid"], "bad.txt", { type: "text/plain" })], configurable: true }); await input.trigger("change");
+  await wrapper.get('[data-testid="action-form"]').trigger("submit"); await flushPromises(); expect(api.performCareAction).not.toHaveBeenCalled();
+  useAuthStore().user = { maNhanVien: 73, vaiTro: "STAFF", isActive: true, quyen: ["CARE_UPDATE"] }; await flushPromises();
+  expect(wrapper.find('[data-testid="action-form"]').exists()).toBe(false);
+});
 

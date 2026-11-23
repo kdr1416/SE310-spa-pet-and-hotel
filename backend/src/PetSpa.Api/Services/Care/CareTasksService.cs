@@ -59,7 +59,8 @@ public sealed class CareTasksService(PetSpaDbContext db, CareOperation care, IFi
             }
             return ApiResponse<PageBookingPet>.Ok(new(items, query.Trang, query.KichThuocTrang, total));
         }
-        catch (NpgsqlException error) when (error.IsTransient)
+        catch (Exception error) when (error is NpgsqlException { IsTransient: true } or
+            InvalidOperationException { InnerException: NpgsqlException { IsTransient: true } })
         {
             return ApiResponse<PageBookingPet>.Fail("Dịch vụ tạm thời không khả dụng.", "TEMPORARY_FAILURE");
         }

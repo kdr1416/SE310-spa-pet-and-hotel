@@ -4,6 +4,8 @@ import { ref } from "vue";
 export function useSpaCommand() {
   const busy = ref(false), uncertain = ref(false);
   let pending = null;
+  let generation = 0;
+  function reset() { generation++; pending = null; busy.value = false; uncertain.value = false; }
   const fileIds = new WeakMap();
   let nextFileId = 0;
   function signature(fields) {
@@ -21,15 +23,18 @@ export function useSpaCommand() {
     if (!pending || (!uncertain.value && identity !== pending.identity))
       pending = { identity, fields: { ...fields, requestId: crypto.randomUUID() }, send };
     busy.value = true;
+    const current = generation, command = pending;
     try {
-      const response = await pending.send(pending.fields);
+      const response = await command.send(command.fields);
+      if (current !== generation) throw { errorCode: "COMMAND_SCOPE_CHANGED", message: "Phiên thao tác đã thay đổi. Vui lòng tải lại." };
       if (response.success === false) throw response;
       pending = null; uncertain.value = false;
       return response;
     } catch (error) {
+      if (current !== generation) throw { errorCode: "COMMAND_SCOPE_CHANGED", message: "Phiên thao tác đã thay đổi. Vui lòng tải lại." };
       uncertain.value = !error.errorCode || error.errorCode === "TEMPORARY_FAILURE";
       throw error;
-    } finally { busy.value = false; }
+    } finally { if (current === generation) busy.value = false; }
   }
-  return { busy, uncertain, run };
+  return { busy, uncertain, run, reset };
 }
