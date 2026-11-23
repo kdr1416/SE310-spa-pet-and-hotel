@@ -32,6 +32,8 @@ public sealed record TrackingPair(
     [Required, RegularExpression("[0-9]{10}")] string SoDienThoai,
     [Required, StringLength(8, MinimumLength = 8)] string TrackingCode);
 
+public sealed record Acknowledged(bool DaTiepNhan = true, string ThongBao = "Thành công");
+
 public sealed record PageBooking(IReadOnlyList<BookingResponse> Items, int Trang, int KichThuocTrang, int TongSo);
 
 public sealed record TrackingResponse(
