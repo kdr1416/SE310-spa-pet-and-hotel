@@ -1033,3 +1033,308 @@ describe("commands-booking", () => {
     }
   });
 });
+
+describe("live care and billing commands", () => {
+  const requestId = "550e8400-e29b-41d4-a716-446655440000";
+  const careLog = {
+    maNhatKy: 73, loaiNhatKy: "NOTE", ghiChu: "Đã ăn", anhUrl: null, canNangTheoDoi: 5,
+    tenTacGia: "Nhân viên thử nghiệm", ghiNhanAt: "2026-11-23T04:00:00Z",
+  };
+  const pet = {
+    maChiTietDon: 15, maThuCung: 25, tenThuCung: "Miu", trangThai: "READY",
+    canNangChot: 5, sizeThucTe: "S", sizeChot: "S", tinhTrangLong: ["BINH_THUONG"],
+    maLoaiPhong: null, tenNhanVienPhuTrach: "Nhân viên thử nghiệm", dichVu: [],
+    nhatKy: [careLog], nhanSom: false, banGiaoAt: null, traLaiAt: null,
+  };
+  const invoice = {
+    maHoaDon: 51, soHoaDon: "HD-51", maDon: 101, thayTheHoaDon: null, trangThai: "UNPAID",
+    lapAt: "2026-11-23T04:00:00Z", nguoiLap: "Nhân viên thử nghiệm",
+    khach: { hoTen: "Khách thử nghiệm", soDienThoai: "0901234567" },
+    ngayHen: "2026-11-23", dongTien: [{
+      maDongHoaDon: 8, loaiKhoan: "SPA", maChiTietDon: 15, maDichVuTrongDon: 35, maPhuPhi: null,
+      tenPet: "Miu", tenKhoan: "Tắm", size: "S", soLuong: 1,
+      donGia: 120000, thanhTien: 120000, dienGiai: null,
+    }],
+    tongTien: 120000, cocKhauTru: 20000, conPhaiTra: 100000, paidAt: null, thuHoiAt: null, qr: null,
+  };
+  const paidInvoice = { ...invoice, trangThai: "PAID", paidAt: "2026-11-23T04:30:00Z" };
+  let callOperation;
+  let liveHttpClient;
+  let originalAdapter;
+  let adapter;
+
+  function respondWith(data, status = 200) {
+    const envelope = { success: true, data, message: "Thành công", traceId: "test-command-trace" };
+    adapter.mockImplementation(async (config) => ({
+      config, data: envelope, status, statusText: "", headers: {},
+    }));
+    return envelope;
+  }
+
+  function expectRequest(url) {
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const [config] = adapter.mock.calls[0];
+    expect(config).toMatchObject({ method: "post", url });
+    return config;
+  }
+
+  function expectMultipart(url, dto, attachment) {
+    const config = expectRequest(url);
+    expect(config.headers.getContentType()).not.toContain("application/json");
+    expect(config.data).toBeInstanceOf(FormData);
+    expect([...config.data.keys()]).toEqual(attachment ? ["payload", attachment[0]] : ["payload"]);
+    expect(JSON.parse(config.data.get("payload"))).toEqual(dto);
+    if (attachment) expect(config.data.get(attachment[0])).toBe(attachment[1]);
+  }
+
+  async function expectLocalRejection(action, payload, field) {
+    await expect(callOperation(action, payload)).rejects.toMatchObject({
+      success: false, data: null, errorCode: "VALIDATION_FAILED",
+      errors: [{ field, message: expect.any(String) }],
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  }
+
+  beforeEach(async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.stubEnv("VITE_USE_MOCK_API", "false");
+    vi.resetModules();
+    ({ default: liveHttpClient } = await import("../../src/services/api/httpClient"));
+    ({ callOperation } = await import("../../src/services/api/operationClient"));
+    originalAdapter = liveHttpClient.defaults.adapter;
+    adapter = vi.fn();
+    liveHttpClient.defaults.adapter = adapter;
+  });
+
+  afterEach(() => {
+    liveHttpClient.defaults.adapter = originalAdapter;
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  describe("commands-care", () => {
+    const intakePhoto = new File(["intake fixture"], "intake.png", { type: "image/png" });
+    const finishPhoto = new File(["finish fixture"], "finish.png", { type: "image/png" });
+    const checkin = {
+      canNangThucTe: 5, tinhTrangLong: ["BINH_THUONG", "LONG_NGAN"], maNhanVien: 7,
+      ghiChuSucKhoe: "Không thấy vết thương", quyetDinhGia: "THU_GON", xacNhanKhach: true,
+      noiDungThuGon: "Chỉ tắm", maHoSoTiemChung: 8, xacNhanGiayHopLe: true,
+    };
+
+    it("posts canonical checkInPet with the original photo separated from Checkin JSON", async () => {
+      const envelope = respondWith({ ...pet, trangThai: "WAITING" });
+      const result = await callOperation("checkInPet", {
+        ...checkin, requestId, maChiTietDon: 15, detailId: 99, id: 101, anhTiepNhan: intakePhoto,
+        weight: 99, nhanSom: true,
+      });
+
+      expectMultipart("/internal/booking-pets/15/check-in", { requestId, ...checkin },
+        ["anhTiepNhan", intakePhoto]);
+      expect(result).toEqual(envelope);
+    });
+
+    it("maps checkIn aliases using the pet detail ID and keeps the supplied fur code", async () => {
+      const envelope = respondWith({ ...pet, trangThai: "WAITING" });
+      const result = await callOperation("checkIn", {
+        requestId, id: 101, detailId: 15, weight: 5, coat: "BINH_THUONG", employeeId: 7,
+        ghiChuSucKhoe: "Không thấy vết thương", quyetDinhGia: "SIZE_THUC_TE",
+        xacNhanKhach: true, anhTiepNhan: intakePhoto,
+      });
+
+      expectMultipart("/internal/booking-pets/15/check-in", {
+        requestId, canNangThucTe: 5, tinhTrangLong: ["BINH_THUONG"], maNhanVien: 7,
+        ghiChuSucKhoe: "Không thấy vết thương", quyetDinhGia: "SIZE_THUC_TE", xacNhanKhach: true,
+      }, ["anhTiepNhan", intakePhoto]);
+      expect(result).toMatchObject({
+        ...envelope, data: { ...envelope.data, id: 15, checkedIn: true, trangThaiChamSoc: "WAITING" },
+      });
+    });
+
+    it.each([
+      [{ anhTiepNhan: undefined }, "anhTiepNhan"],
+      [{ ghiChuSucKhoe: " " }, "ghiChuSucKhoe"],
+      [{ maNhanVien: undefined }, "maNhanVien"],
+      [{ quyetDinhGia: undefined }, "quyetDinhGia"],
+      [{ canNangThucTe: undefined }, "canNangThucTe"],
+      [{ xacNhanKhach: "true" }, "xacNhanKhach"],
+      [{ noiDungThuGon: undefined }, "noiDungThuGon"],
+      [{ id: 101, detailId: undefined }, "maChiTietDon"],
+      [{ tinhTrangLong: undefined, coat: "Bình thường" }, "tinhTrangLong"],
+    ])("rejects incomplete check-in input %j before HTTP", async (override, field) => {
+      await expectLocalRejection(
+        "checkIn", { ...checkin, detailId: 15, anhTiepNhan: intakePhoto, ...override }, field,
+      );
+    });
+
+    it("keeps the explicit action and photo for canonical READY", async () => {
+      const envelope = respondWith(pet);
+
+      const result = await callOperation("performCareAction", {
+        requestId, id: 15, hanhDong: "READY", next: "PAUSED", ghiChu: "Đã hoàn tất",
+        anhThanhPham: finishPhoto, weight: 5,
+      });
+
+      expectMultipart("/internal/booking-pets/15/care-actions",
+        { requestId, hanhDong: "READY", ghiChu: "Đã hoàn tất" }, ["anhThanhPham", finishPhoto]);
+      expect(result).toEqual(envelope);
+    });
+
+    it.each([
+      ["WAITING", "IN_PROGRESS", "START", undefined, undefined],
+      ["PAUSED", "IN_PROGRESS", "RESUME", undefined, undefined],
+      ["IN_PROGRESS", "PAUSED", "PAUSE", "Chờ thú cưng bình tĩnh", undefined],
+      ["IN_PROGRESS", "READY", "READY", "", finishPhoto],
+    ])("maps careUpdate from %s to %s as %s", async (currentState, next, hanhDong, note, photo) => {
+      const envelope = respondWith({ ...pet, trangThai: next });
+      const result = await callOperation("careUpdate", {
+        requestId, id: 101, detailId: 15, currentState, next, note, photo, weight: 5,
+      });
+
+      const dto = { requestId, hanhDong };
+      if (note) dto.ghiChu = note;
+      expectMultipart("/internal/booking-pets/15/care-actions", dto,
+        photo ? ["anhThanhPham", photo] : undefined);
+      expect(result).toMatchObject({ ...envelope, data: { ...envelope.data, id: 15, trangThaiChamSoc: next } });
+    });
+
+    it("sends an explicit READY photo exception with no fabricated photo", async () => {
+      respondWith(pet);
+
+      await callOperation("performCareAction", {
+        requestId, maChiTietDon: 15, hanhDong: "READY", maNgoaiLeAnh: 13,
+      });
+
+      expectMultipart("/internal/booking-pets/15/care-actions",
+        { requestId, hanhDong: "READY", maNgoaiLeAnh: 13 });
+    });
+
+    it.each([
+      ["careUpdate", { next: "IN_PROGRESS" }, "currentState"],
+      ["careUpdate", { next: "DONE" }, "hanhDong"],
+      ["careUpdate", { id: 101, detailId: undefined, next: "PAUSED", note: "Chờ" }, "maChiTietDon"],
+      ["performCareAction", { hanhDong: "PAUSE", ghiChu: " " }, "ghiChu"],
+      ["performCareAction", { hanhDong: "READY" }, "anhThanhPham"],
+      ["addCareLog", { canNangTheoDoi: 5 }, "ghiChu"],
+      ["handoverPet", { xacNhanDaNhan: false }, "xacNhanDaNhan"],
+    ])("rejects %s when its required input is missing from %j", async (action, input, field) => {
+      await expectLocalRejection(action, { detailId: 15, ...input }, field);
+    });
+
+    it.each([
+      ["notes and weight", { ghiChu: "Đã ăn", canNangTheoDoi: 5 },
+        { ghiChu: "Đã ăn", canNangTheoDoi: 5 }, undefined],
+      ["a photo", { anh: finishPhoto }, {}, ["anh", finishPhoto]],
+    ])("posts a separate care log with %s and its own request ID", async (_name, input, dto, attachment) => {
+      const logRequestId = "550e8400-e29b-41d4-a716-446655440001";
+      const uuid = vi.spyOn(crypto, "randomUUID").mockReturnValueOnce(requestId).mockReturnValueOnce(logRequestId);
+      respondWith({ ...pet, trangThai: "IN_PROGRESS" });
+      await callOperation("performCareAction", { id: 15, hanhDong: "START" });
+      expectRequest("/internal/booking-pets/15/care-actions");
+      adapter.mockClear();
+
+      const envelope = respondWith(careLog, 201);
+      const payload = { detailId: 15, id: 101, ...input };
+      const result = await callOperation("addCareLog", payload);
+
+      expectMultipart("/internal/booking-pets/15/care-logs", { requestId: logRequestId, ...dto }, attachment);
+      expect(payload.requestId).toBe(logRequestId);
+      expect(uuid).toHaveBeenCalledTimes(2);
+      expect(result).toEqual(envelope);
+    });
+
+    it("posts a standalone handover command only with explicit confirmation", async () => {
+      const envelope = respondWith({ ...pet, trangThai: "DONE", banGiaoAt: "2026-11-23T05:00:00Z" });
+
+      const result = await callOperation("handoverPet", {
+        requestId, maChiTietDon: 15, id: 101, xacNhanDaNhan: true, trangThai: "READY",
+      });
+
+      const config = expectRequest("/internal/booking-pets/15/handover");
+      expect(JSON.parse(config.data)).toEqual({ requestId, xacNhanDaNhan: true });
+      expect(result).toEqual(envelope);
+    });
+  });
+
+  describe("commands-billing", () => {
+    const collect = { phuongThuc: "CASH", soTienThucNhan: 120000, soTienDaTraLai: 20000, bangChungTraThua: "Đã trả tại quầy" };
+
+    it.each([{ id: 101 }, { bookingId: 101, id: 99 }])(
+      "creates a single invoice with %j without collecting payment", async (identifiers) => {
+        const envelope = respondWith(invoice, 201);
+
+        const result = await callOperation("createInvoice", { ...identifiers, requestId, ...collect });
+
+        const config = expectRequest("/internal/bookings/101/invoices");
+        expect(JSON.parse(config.data)).toEqual({ requestId });
+        expect(result).toEqual(envelope);
+      },
+    );
+
+    it.each([
+      ["checkoutInvoice", { id: 51 }, collect, collect],
+      ["checkoutInvoice", { invoiceId: 51, maHoaDon: 99, id: 101 },
+        { phuongThuc: "BANK_TRANSFER", soTienThucNhan: 100000, soTienDaTraLai: 0, thamChieu: "TT-51" },
+        { phuongThuc: "BANK_TRANSFER", soTienThucNhan: 100000, soTienDaTraLai: 0, thamChieu: "TT-51" }],
+      ["confirmPayment", { id: 101, invoiceId: 51 },
+        { method: "CASH", soTienThucNhan: 120000, soTienDaTraLai: 20000, bangChungTraThua: "Đã trả tại quầy" }, collect],
+      ["confirmPayment", { id: 101, maHoaDon: 51 }, collect, collect],
+      ["confirmPayment", { id: 101, hoaDon: invoice }, collect, collect],
+    ])("collects a real invoice once via %s with %j", async (action, identifiers, input, dto) => {
+      const envelope = respondWith(paidInvoice);
+      const bookingPet = { id: 15, trangThai: "READY", trangThaiChamSoc: "READY" };
+
+      const result = await callOperation(action, {
+        ...identifiers, requestId, ...input, conPhaiTra: 100000, chiTietDonList: [bookingPet],
+      });
+
+      const config = expectRequest("/internal/invoices/51/checkout");
+      expect(JSON.parse(config.data)).toEqual({ requestId, ...dto });
+      expect(bookingPet).toEqual({ id: 15, trangThai: "READY", trangThaiChamSoc: "READY" });
+      if (action === "checkoutInvoice") {
+        expect(result).toEqual(envelope);
+      } else {
+        expect(result).toMatchObject({
+          ...envelope, data: { ...paidInvoice, id: 51, trangThaiThanhToan: "PAID" },
+        });
+      }
+    });
+
+    it.each([
+      [{ id: 101, method: "CASH" }, "invoiceId"],
+      [{ id: 101, ...collect }, "invoiceId"],
+      [{ invoiceId: 51, ...collect, phuongThuc: undefined }, "phuongThuc"],
+      [{ invoiceId: 51, ...collect, soTienThucNhan: undefined, conPhaiTra: 100000 }, "soTienThucNhan"],
+      [{ invoiceId: 51, ...collect, soTienDaTraLai: undefined }, "soTienDaTraLai"],
+    ])("rejects confirmPayment input %j before creating or collecting an invoice", async (input, field) => {
+      await expectLocalRejection("confirmPayment", input, field);
+    });
+
+    it("preserves a checkout conflict and waits for the caller to retry with the same request ID", async () => {
+      const uuid = vi.spyOn(crypto, "randomUUID").mockReturnValue(requestId);
+      const failure = {
+        success: false, data: null, message: "Số tiền không khớp", errorCode: "AMOUNT_MISMATCH",
+        errors: [], traceId: "test-checkout-trace",
+      };
+      const payload = { invoiceId: 51, ...collect };
+      const envelope = respondWith(paidInvoice);
+      adapter.mockImplementationOnce(async (config) => {
+        throw new AxiosError(failure.message, AxiosError.ERR_BAD_REQUEST, config, {}, {
+          config, status: 409, data: failure,
+        });
+      });
+
+      await expect(callOperation("checkoutInvoice", payload)).rejects.toEqual(failure);
+      expectRequest("/internal/invoices/51/checkout");
+      expect(payload.requestId).toBe(requestId);
+
+      await expect(callOperation("checkoutInvoice", payload)).resolves.toEqual(envelope);
+      expect(adapter).toHaveBeenCalledTimes(2);
+      expect(uuid).toHaveBeenCalledTimes(1);
+      for (const [config] of adapter.mock.calls) expect(JSON.parse(config.data).requestId).toBe(requestId);
+    });
+  });
+});

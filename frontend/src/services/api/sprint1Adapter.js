@@ -301,6 +301,186 @@ function reviewBooking(payload) {
   }
 }
 
+function requirePetDetailId({ maChiTietDon, detailId, id }, isUiAlias = false) {
+  const petId = maChiTietDon ?? detailId ?? (isUiAlias ? undefined : id);
+  if (!Number.isInteger(petId) || petId <= 0) {
+    throw validationError("maChiTietDon", "Cần mã chi tiết thú cưng hợp lệ.");
+  }
+  return petId;
+}
+
+function hasText(value) {
+  return typeof value === "string" && Boolean(value.trim());
+}
+
+function postCareMultipart(url, dto, photoField, photo) {
+  const form = new FormData();
+  form.append("payload", JSON.stringify(dto, (_key, value) => value ?? undefined));
+  if (photo != null) form.append(photoField, photo);
+  return httpClient.post(url, form);
+}
+
+function toCheckinDto(payload) {
+  const canNangThucTe = payload.canNangThucTe ?? payload.weight;
+  const maNhanVien = payload.maNhanVien ?? payload.employeeId;
+  const furInput = payload.tinhTrangLong ?? payload.coat;
+  const tinhTrangLong = typeof furInput === "string" && /^[A-Za-z0-9_-]+$/.test(furInput)
+    ? [furInput]
+    : furInput;
+  const { ghiChuSucKhoe, quyetDinhGia, xacNhanKhach, noiDungThuGon, maHoSoTiemChung, xacNhanGiayHopLe } = payload;
+
+  if (!Number.isFinite(canNangThucTe) || canNangThucTe <= 0) {
+    throw validationError("canNangThucTe", "Cần cân nặng thực tế hợp lệ.");
+  }
+  if (!Array.isArray(tinhTrangLong) || !tinhTrangLong.length || !tinhTrangLong.every(hasText)) {
+    throw validationError("tinhTrangLong", "Cần mã tình trạng lông.");
+  }
+  if (!Number.isInteger(maNhanVien) || maNhanVien <= 0) {
+    throw validationError("maNhanVien", "Cần chọn nhân viên phụ trách.");
+  }
+  if (!hasText(ghiChuSucKhoe)) {
+    throw validationError("ghiChuSucKhoe", "Cần ghi nhận sức khỏe lúc tiếp nhận.");
+  }
+  if (!["SIZE_THUC_TE", "THU_GON"].includes(quyetDinhGia)) {
+    throw validationError("quyetDinhGia", "Cần quyết định về giá lúc tiếp nhận.");
+  }
+  if (quyetDinhGia === "THU_GON" && !hasText(noiDungThuGon)) {
+    throw validationError("noiDungThuGon", "Cần ghi nội dung thu gọn dịch vụ.");
+  }
+  if (xacNhanKhach !== true) {
+    throw validationError("xacNhanKhach", "Cần xác nhận đồng thuận của khách.");
+  }
+
+  return {
+    requestId: ensureRequestId(payload),
+    canNangThucTe, tinhTrangLong, maNhanVien, ghiChuSucKhoe, quyetDinhGia,
+    xacNhanKhach, noiDungThuGon, maHoSoTiemChung, xacNhanGiayHopLe,
+  };
+}
+
+function checkInPet(payload, isUiAlias = false) {
+  const petId = requirePetDetailId(payload, isUiAlias);
+  const photo = payload.anhTiepNhan;
+  if (!(photo instanceof File)) {
+    throw validationError("anhTiepNhan", "Cần ảnh lúc tiếp nhận thú cưng.");
+  }
+  const request = postCareMultipart(
+    `/internal/booking-pets/${petId}/check-in`, toCheckinDto(payload), "anhTiepNhan", photo,
+  );
+  return isUiAlias ? projectResponse(request, projectBookingPet) : request;
+}
+
+function careActionFromState({ next, currentState }) {
+  switch (next) {
+    case "IN_PROGRESS":
+      if (currentState === "WAITING") return "START";
+      if (currentState === "PAUSED") return "RESUME";
+      throw validationError("currentState", "Cần trạng thái chờ hoặc tạm dừng của thú cưng.");
+    case "PAUSED":
+      return "PAUSE";
+    case "READY":
+      return "READY";
+  }
+}
+
+function performCareAction(payload, isUiAlias = false) {
+  const petId = requirePetDetailId(payload, isUiAlias);
+  const hanhDong = payload.hanhDong ?? (isUiAlias ? careActionFromState(payload) : undefined);
+  const ghiChu = payload.ghiChu ?? payload.note;
+  const photo = payload.anhThanhPham ?? payload.photo;
+  const { maNgoaiLeAnh } = payload;
+
+  if (!["START", "PAUSE", "RESUME", "READY"].includes(hanhDong)) {
+    throw validationError("hanhDong", "Cần hành động chăm sóc hợp lệ.");
+  }
+  const hasNote = hasText(ghiChu);
+  if (hanhDong === "PAUSE" && !hasNote) {
+    throw validationError("ghiChu", "Cần lý do tạm dừng chăm sóc.");
+  }
+  if (photo != null && !(photo instanceof File)) {
+    throw validationError("anhThanhPham", "Cần tệp ảnh thành phẩm hợp lệ.");
+  }
+  if (hanhDong === "READY" && photo == null && !(Number.isInteger(maNgoaiLeAnh) && maNgoaiLeAnh > 0)) {
+    throw validationError("anhThanhPham", "Cần ảnh thành phẩm hoặc mã ngoại lệ ảnh.");
+  }
+
+  const dto = {
+    requestId: ensureRequestId(payload),
+    hanhDong,
+    ghiChu: hasNote ? ghiChu : undefined,
+    maNgoaiLeAnh,
+  };
+  const request = postCareMultipart(`/internal/booking-pets/${petId}/care-actions`, dto, "anhThanhPham", photo);
+  return isUiAlias ? projectResponse(request, projectBookingPet) : request;
+}
+
+function addCareLog(payload) {
+  const petId = requirePetDetailId(payload);
+  const { anh, ghiChu, canNangTheoDoi } = payload;
+  if (anh != null && !(anh instanceof File)) {
+    throw validationError("anh", "Cần tệp ảnh nhật ký hợp lệ.");
+  }
+  const hasNote = hasText(ghiChu);
+  if (!hasNote && anh == null) {
+    throw validationError("ghiChu", "Cần ghi chú hoặc ảnh nhật ký.");
+  }
+  const dto = {
+    requestId: ensureRequestId(payload),
+    ghiChu: hasNote ? ghiChu : undefined,
+    canNangTheoDoi,
+  };
+  return postCareMultipart(`/internal/booking-pets/${petId}/care-logs`, dto, "anh", anh);
+}
+
+function handoverPet(payload) {
+  const petId = requirePetDetailId(payload);
+  const { xacNhanDaNhan } = payload;
+  if (xacNhanDaNhan !== true) {
+    throw validationError("xacNhanDaNhan", "Cần xác nhận khách đã nhận thú cưng.");
+  }
+  return httpClient.post(`/internal/booking-pets/${petId}/handover`, {
+    requestId: ensureRequestId(payload),
+    xacNhanDaNhan,
+  });
+}
+
+function createInvoice(payload) {
+  const bookingId = requireBookingId(payload);
+  return httpClient.post(`/internal/bookings/${bookingId}/invoices`, {
+    requestId: ensureRequestId(payload),
+  });
+}
+
+function collectInvoice(payload, invoiceId) {
+  const phuongThuc = payload.phuongThuc ?? payload.method;
+  const { soTienThucNhan, soTienDaTraLai, thamChieu, bangChungTraThua } = payload;
+  if (!Number.isInteger(invoiceId) || invoiceId <= 0) {
+    throw validationError("invoiceId", "Cần mã hóa đơn hợp lệ. Hãy lập hóa đơn trước khi thu tiền.");
+  }
+  if (!["CASH", "BANK_TRANSFER"].includes(phuongThuc)) {
+    throw validationError("phuongThuc", "Cần phương thức thanh toán hợp lệ.");
+  }
+  if (!Number.isFinite(soTienThucNhan)) {
+    throw validationError("soTienThucNhan", "Cần nhập số tiền thực nhận.");
+  }
+  if (!Number.isFinite(soTienDaTraLai)) {
+    throw validationError("soTienDaTraLai", "Cần nhập số tiền đã trả lại.");
+  }
+  return httpClient.post(`/internal/invoices/${invoiceId}/checkout`, {
+    requestId: ensureRequestId(payload),
+    phuongThuc, soTienThucNhan, soTienDaTraLai, thamChieu, bangChungTraThua,
+  });
+}
+
+function checkoutInvoice(payload) {
+  return collectInvoice(payload, payload.invoiceId ?? payload.maHoaDon ?? payload.id);
+}
+
+function confirmPayment(payload) {
+  const invoiceId = payload.invoiceId ?? payload.maHoaDon ?? payload.hoaDon?.maHoaDon;
+  return projectResponse(collectInvoice(payload, invoiceId), projectInvoice);
+}
+
 const operations = new Map([
   ["getCatalog", { mutation: false, call: () => httpClient.get("/catalog") }],
   ["catalog", { mutation: false, call: () => projectResponse(httpClient.get("/catalog"), projectCatalog) }],
@@ -314,6 +494,15 @@ const operations = new Map([
   ["listBookings", { mutation: false, call: listBookings }],
   ["getWorkspace", { mutation: false, call: getWorkspace }],
   ["getInvoice", { mutation: false, call: getInvoice }],
+  ["checkInPet", { mutation: true, call: checkInPet }],
+  ["checkIn", { mutation: true, call: (payload) => checkInPet(payload, true) }],
+  ["performCareAction", { mutation: true, call: performCareAction }],
+  ["careUpdate", { mutation: true, call: (payload) => performCareAction(payload, true) }],
+  ["addCareLog", { mutation: true, call: addCareLog }],
+  ["handoverPet", { mutation: true, call: handoverPet }],
+  ["createInvoice", { mutation: true, call: createInvoice }],
+  ["checkoutInvoice", { mutation: true, call: checkoutInvoice }],
+  ["confirmPayment", { mutation: true, call: confirmPayment }],
 ]);
 
 export function supportsSprint1Action(action) {
