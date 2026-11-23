@@ -457,3 +457,283 @@ describe("live session and permissions", () => {
     expect(() => requireAccess(staff, "CARE_UPDATE")).toThrow();
   });
 });
+
+describe("Sprint 1 reads", () => {
+  const catalog = {
+    dichVu: [{
+      maDichVu: 11, tenDichVu: "Tắm", loaiDichVu: "SPA", thoiLuongPhut: 30,
+      yeuCauTiemChung: false, bangGia: [{ maSize: "S", donGia: 100000 }, { maSize: "M", donGia: 115000 }],
+      moTa: null, dangHoatDong: false,
+    }],
+    combo: [{
+      maCombo: 12, tenCombo: "Combo", thanhPhan: [], bangGia: [{ maSize: "S", donGia: 150000 }],
+      moTa: null, dangHoatDong: true,
+    }],
+    loaiPhong: [{
+      maLoaiPhong: 13, tenPhong: "Phòng nhỏ", giaMoiDem: 250000, soLuongPhong: 4,
+      dangHoatDong: true,
+    }],
+    khoangSize: [{ maSize: "S", tuKg: 0, denKg: 5 }],
+  };
+  const contact = { hoTen: "Khách thử nghiệm", soDienThoai: "0901234567", email: "customer@example.test" };
+  const invoice = {
+    maHoaDon: 902, soHoaDon: "HD-902", maDon: 101, thayTheHoaDon: null, trangThai: "UNPAID",
+    lapAt: "2026-11-23T04:00:00Z", nguoiLap: "Nhân viên thử nghiệm", khach: contact,
+    ngayHen: "2026-11-23",
+    dongTien: [{
+      maDongHoaDon: 30, loaiKhoan: "SPA", maChiTietDon: 15, maDichVuTrongDon: 35, maPhuPhi: null,
+      tenPet: "Miu", tenKhoan: "Tắm", size: "M", soLuong: 1, donGia: 115000, thanhTien: 115000,
+      dienGiai: null,
+    }],
+    tongTien: 115000, cocKhauTru: 15000, conPhaiTra: 100000, paidAt: null, thuHoiAt: null, qr: null,
+  };
+  const booking = {
+    maDon: 101, trackingCode: "ABCD1234", trangThai: "IN_PROGRESS",
+    batDauDuKien: "2026-11-22T18:00:00Z", ketThucDuKien: "2026-11-23T04:00:00Z",
+    lienHe: contact, tongTamTinh: 110000, tienCoc: null, hoaDon: invoice, emailDelivery: "SENT",
+    thuCung: [{
+      maChiTietDon: 15, maThuCung: 25, tenThuCung: "Miu", trangThai: "READY",
+      canNangChot: 6, sizeThucTe: "M", sizeChot: "M", tinhTrangLong: ["BINH_THUONG"],
+      maLoaiPhong: null, tenNhanVienPhuTrach: "Nhân viên thử nghiệm",
+      dichVu: [{
+        maDichVuTrongDon: 35, maDichVu: 11, maCombo: null, maKhungGio: 73, tenDichVu: "Tắm",
+        trangThai: "HOAN_TAT", sizeChot: "M", giaChot: 115000, thanhPhan: [],
+      }],
+      nhatKy: [{
+        maNhatKy: 31, loaiNhatKy: "READY", ghiChu: "Đã tắm", anhUrl: "https://example.test/care.jpg",
+        canNangTheoDoi: null, tenTacGia: "Nhân viên thử nghiệm", ghiNhanAt: "2026-11-23T03:00:00Z",
+      }],
+      nhanSom: false, banGiaoAt: null, traLaiAt: null,
+    }],
+  };
+  let callOperation;
+  let liveHttpClient;
+  let originalAdapter;
+
+  function respondWith(data) {
+    const envelope = { success: true, data, message: "Thành công", traceId: "test-read-trace" };
+    const adapter = vi.fn(async (config) => ({
+      config, data: envelope, status: 200, statusText: "", headers: {},
+    }));
+    liveHttpClient.defaults.adapter = adapter;
+    return { adapter, envelope };
+  }
+
+  beforeEach(async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    vi.stubEnv("VITE_USE_MOCK_API", "false");
+    vi.resetModules();
+    ({ default: liveHttpClient } = await import("../../src/services/api/httpClient"));
+    ({ callOperation } = await import("../../src/services/api/operationClient"));
+    originalAdapter = liveHttpClient.defaults.adapter;
+  });
+
+  afterEach(() => {
+    liveHttpClient.defaults.adapter = originalAdapter;
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it("keeps the canonical Catalog envelope and maps display aliases without date-only capacity", async () => {
+    const { adapter, envelope } = respondWith(catalog);
+
+    expect(await callOperation("getCatalog", {}, true)).toEqual(envelope);
+    const result = await callOperation("catalog", { date: "2026-11-23" }, true);
+
+    expect(adapter).toHaveBeenCalledTimes(2);
+    for (const [config] of adapter.mock.calls) {
+      expect(config).toMatchObject({ method: "get", url: "/catalog" });
+      expect(config.params).toBeUndefined();
+    }
+    expect(result).toMatchObject({
+      ...envelope,
+      data: {
+        ...catalog,
+        services: [{ ...catalog.dichVu[0], id: 11, isActive: false }],
+        combos: [{ ...catalog.combo[0], id: 12, isActive: true }],
+        rooms: [{ ...catalog.loaiPhong[0], id: 13, isActive: true, giaTheoNgay: 250000 }],
+        shifts: [{ tenCa: "Ca Sáng" }, { tenCa: "Ca Chiều" }],
+        availability: [],
+      },
+    });
+    expect(result.data.shifts.every((shift) => !("slotPetMacDinh" in shift))).toBe(true);
+    expect(catalog.dichVu[0]).not.toHaveProperty("id");
+  });
+
+  it("posts only the AvailabilityQuery fields with the supplied booking and service slot IDs", async () => {
+    const availability = { maKhungGio: 73, slotConLai: 3, phutConLai: 70, phong: [], coTheDat: true, lyDo: null };
+    const { adapter, envelope } = respondWith(availability);
+
+    const result = await callOperation("checkAvailability", {
+      date: "2026-11-23",
+      shiftId: 1,
+      maKhungGio: 73,
+      ngayTra: "2026-11-24",
+      thuCung: [
+        { maLoaiPhong: 13, tenThuCung: "Miu", dichVu: [] },
+        { dichVu: [{ maDichVu: 11, maKhungGio: 81, shiftId: 2, estimatedPrice: 100000 }] },
+      ],
+    }, true);
+
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const [config] = adapter.mock.calls[0];
+    expect(config).toMatchObject({ method: "post", url: "/availability" });
+    expect(JSON.parse(config.data)).toEqual({
+      maKhungGio: 73,
+      ngayTra: "2026-11-24",
+      thuCung: [
+        { maLoaiPhong: 13, dichVu: [] },
+        { dichVu: [{ maDichVu: 11, maKhungGio: 81 }] },
+      ],
+    });
+    expect(result).toEqual(envelope);
+  });
+
+  it("uses the normalized tracking pair and projects the public-safe result for the UI", async () => {
+    const { lienHe, emailDelivery, ...publicBooking } = booking;
+    const { adapter, envelope } = respondWith({
+      ...publicBooking,
+      hoaDon: null,
+      hanhDongChoPhep: [],
+    });
+
+    expect(await callOperation("lookupTracking", {
+      trackingCode: "ABCD1234", soDienThoai: "0901234567", phone: "ignored",
+    }, true)).toEqual(envelope);
+    const result = await callOperation("lookupBooking", {
+      trackingCode: "ABCD1234", phone: "090-123 4567", bookingId: 101,
+    }, true);
+
+    expect(adapter).toHaveBeenCalledTimes(2);
+    for (const [config] of adapter.mock.calls) {
+      expect(config).toMatchObject({ method: "post", url: "/tracking/lookup" });
+      expect(JSON.parse(config.data)).toEqual({ trackingCode: "ABCD1234", soDienThoai: "0901234567" });
+    }
+    expect(result).toMatchObject({
+      ...envelope,
+      data: {
+        ...envelope.data,
+        id: 101,
+        khachHang: { soDienThoai: "0901234567" },
+        date: "2026-11-23",
+        chiTietDonList: [{
+          id: 15, thuCung: { tenThuCung: "Miu" }, trangThaiChamSoc: "READY",
+          nhatKyChamSoc: [{
+            id: 31, photo: "https://example.test/care.jpg", ghiChuSucKhoe: "Đã tắm",
+            thoiGianGhiNhan: "2026-11-23T03:00:00Z",
+          }],
+        }],
+      },
+    });
+    expect(result.data.khachHang).not.toHaveProperty("tenKhachHang");
+    expect(envelope.data).not.toHaveProperty("chiTietDonList");
+  });
+
+  it.each(["090a1234567", "090.123.4567", "+84901234567", "０９０１２３４５６７", 901234567])(
+    "rejects unsupported tracking phone input %s before sending HTTP",
+    async (phone) => {
+      const { adapter } = respondWith(null);
+
+      await expect(callOperation("lookupBooking", { trackingCode: "ABCD1234", phone }, true)).rejects.toMatchObject({
+        success: false,
+        data: null,
+        errorCode: "VALIDATION_FAILED",
+        errors: [{ field: "soDienThoai", message: expect.any(String) }],
+      });
+      expect(adapter).not.toHaveBeenCalled();
+    },
+  );
+
+  it("passes through PageBooking with the canonical query and authenticates without demo storage", async () => {
+    localStorage.setItem("petspa_auth_token", "test-access-token");
+    const { adapter, envelope } = respondWith({ items: [booking], trang: 2, kichThuocTrang: 20, tongSo: 25 });
+
+    const result = await callOperation("listBookings", {
+      trang: 2, kichThuocTrang: 20, tuNgay: "2026-11-23", denNgay: "2026-11-24",
+      trangThai: "IN_PROGRESS", id: 101, actor: 2, search: "Miu",
+    });
+
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const [config] = adapter.mock.calls[0];
+    expect(config).toMatchObject({ method: "get", url: "/internal/bookings" });
+    expect(config.params).toEqual({
+      trang: 2, kichThuocTrang: 20, tuNgay: "2026-11-23", denNgay: "2026-11-24", trangThai: "IN_PROGRESS",
+    });
+    expect(config.headers.get("Authorization")).toBe("Bearer test-access-token");
+    expect(result).toEqual(envelope);
+  });
+
+  it("projects up to 100 workspace bookings and retains the backend total without emitting updates", async () => {
+    const items = Array.from({ length: 100 }, (_, index) => ({ ...booking, maDon: 101 + index }));
+    const { adapter } = respondWith({ items, trang: 1, kichThuocTrang: 100, tongSo: 125 });
+    const dispatchEvent = vi.spyOn(window, "dispatchEvent");
+
+    const envelope = await callOperation("getWorkspace");
+
+    expect(adapter).toHaveBeenCalledTimes(1);
+    const [config] = adapter.mock.calls[0];
+    expect(config).toMatchObject({
+      method: "get", url: "/internal/bookings", params: { kichThuocTrang: 100 },
+    });
+    expect(envelope).toMatchObject({
+      success: true, message: "Thành công", traceId: "test-read-trace",
+      data: { users: [], requests: [], trang: 1, kichThuocTrang: 100 },
+    });
+    expect(envelope.data.tongSo).toBe(125);
+    expect(envelope.data.bookings).toHaveLength(100);
+    expect(envelope.data.bookings[0]).toMatchObject({
+      id: 101, maDon: 101, lienHe: contact,
+      date: "2026-11-23", tongTienTamTinh: 110000,
+      khachHang: { ...contact, tenKhachHang: "Khách thử nghiệm" },
+      hoaDon: {
+        ...invoice,
+        id: 902, trangThaiThanhToan: "UNPAID", tongThanhToan: 100000,
+        ctHoaDonList: [{ id: 30, tenKhoanMuc: "Tắm", thanhTien: 115000 }],
+      },
+    });
+    const projected = envelope.data.bookings[0];
+    expect(projected).not.toHaveProperty("maKhungGio");
+    expect(projected.chiTietDonList[0]).not.toHaveProperty("nhanVienId");
+    expect(projected.chiTietDonList[0].thuCung).not.toHaveProperty("canNangDangKy");
+    expect(booking.hoaDon).not.toHaveProperty("id");
+    expect(booking.thuCung[0]).not.toHaveProperty("trangThaiChamSoc");
+    expect(dispatchEvent).not.toHaveBeenCalled();
+    expect(localStorage.getItem("petspa_workspace_update")).toBeNull();
+  });
+
+  it("reads the canonical Invoice using the invoice ID when a booking ID is also supplied", async () => {
+    const { adapter, envelope } = respondWith(invoice);
+
+    expect(await callOperation("getInvoice", { invoiceId: 902, bookingId: 101 })).toEqual(envelope);
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(adapter.mock.calls[0][0]).toMatchObject({ method: "get", url: "/internal/invoices/902" });
+  });
+
+  it("rejects a missing invoice ID without using the booking ID for HTTP", async () => {
+    const { adapter } = respondWith(invoice);
+
+    await expect(callOperation("getInvoice", { bookingId: 101 })).rejects.toMatchObject({
+      success: false, data: null, errorCode: "VALIDATION_FAILED",
+      errors: [{ field: "invoiceId", message: expect.any(String) }],
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it("preserves a backend read failure even when mock storage is available", async () => {
+    sessionStorage.setItem("petspa_mock_session", JSON.stringify({ id: 1 }));
+    const failure = { success: false, data: null, message: "Cần quyền BOOKING_APPROVE", errorCode: "FORBIDDEN" };
+    const adapter = vi.fn(async (config) => {
+      throw new AxiosError(failure.message, AxiosError.ERR_BAD_REQUEST, config, {}, {
+        config, status: 403, data: failure,
+      });
+    });
+    liveHttpClient.defaults.adapter = adapter;
+
+    await expect(callOperation("getWorkspace")).rejects.toEqual(failure);
+    expect(adapter).toHaveBeenCalledTimes(1);
+  });
+});

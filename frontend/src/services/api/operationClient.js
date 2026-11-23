@@ -1,6 +1,10 @@
 import { IS_MOCK_ENABLED } from "./httpClient";
 import { mockCall } from "../mock/mockRepository";
+import { callSprint1Operation, supportsSprint1Action } from "./sprint1Adapter";
 export async function callOperation(action, payload = {}, isPublic = false) {
+  if (!IS_MOCK_ENABLED && supportsSprint1Action(action)) {
+    return callSprint1Operation(action, payload);
+  }
   if (!IS_MOCK_ENABLED)
     throw new Error(
       "Chức năng này cần hợp đồng API Backend; hiện chỉ có mock.",
