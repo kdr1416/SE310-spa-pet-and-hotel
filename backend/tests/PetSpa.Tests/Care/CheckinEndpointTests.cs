@@ -853,4 +853,251 @@ public class CheckinEndpointTests
         var body = await response.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
         body!.ErrorCode.Should().Be("UNSUPPORTED_FILE");
     }
+
+    [Fact]
+    public async Task CheckIn_ComboSizeChange_UsesComboPricingFallbackAndUpdatesTongTamTinh()
+    {
+        using var factory = CareTestSupport.Create(db =>
+        {
+            SeedCheckinScenario(db);
+            var oldLine = db.DichVuTrongDonSet.Single();
+            db.DichVuTrongDonSet.Remove(oldLine);
+
+            var partService = new DichVu
+            {
+                Id = 2,
+                TenDichVu = "Cắt tỉa lông",
+                LoaiDichVu = "SPA",
+                ThoiLuongPhut = 45,
+                IsActive = true,
+                YeuCauTiemChung = false
+            };
+            db.DichVuSet.Add(partService);
+
+            var combo = new Combo
+            {
+                Id = 1,
+                TenCombo = "Combo Tắm Cắt Toàn Diện",
+                IsActive = true
+            };
+            db.ComboSet.Add(combo);
+            db.BangGiaSizeSet.AddRange(
+                new BangGiaSize { ComboId = combo.Id, SizeId = 1, DonGia = 250000m },
+                new BangGiaSize { ComboId = combo.Id, SizeId = 2, DonGia = 350000m });
+
+            var comboLine = new DichVuTrongDon
+            {
+                Id = 101,
+                RequestId = Guid.NewGuid(),
+                ChiTietDonId = 10,
+                ComboId = combo.Id,
+                KhungGioId = 1,
+                TenSnapshot = combo.TenCombo,
+                BangGiaSizeSnapshot = "{}",
+                ThoiLuongSnapshot = 105,
+                TrangThai = OrderServiceState.CHO_THUC_HIEN,
+                SizeChot = SizeBand.S,
+                GiaChot = 250000m
+            };
+            db.DichVuTrongDonSet.Add(comboLine);
+            db.ThanhPhanDichVuTrongDonSet.AddRange(
+                new ThanhPhanDichVuTrongDon
+                {
+                    Id = 1001,
+                    DichVuTrongDonId = comboLine.Id,
+                    DichVuId = 1,
+                    TenSnapshot = "Tắm sấy vệ sinh",
+                    GiaLeSizeSnapshot = "{\"S\":150000,\"M\":200000}",
+                    ThoiLuongSnapshot = 60,
+                    TrangThai = OrderServiceState.CHO_THUC_HIEN
+                },
+                new ThanhPhanDichVuTrongDon
+                {
+                    Id = 1002,
+                    DichVuTrongDonId = comboLine.Id,
+                    DichVuId = partService.Id,
+                    TenSnapshot = partService.TenDichVu,
+                    GiaLeSizeSnapshot = "{\"S\":150000,\"M\":200000}",
+                    ThoiLuongSnapshot = 45,
+                    TrangThai = OrderServiceState.CHO_THUC_HIEN
+                });
+
+            db.DonDatLichSet.Single().TongTamTinh = 250000m;
+            db.SaveChanges();
+        });
+        using var client = CreateAuthorizedClient(factory);
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
+        body!.Data!.SizeChot.Should().Be("M");
+        var line = body.Data.DichVu.Should().ContainSingle().Subject;
+        line.MaCombo.Should().Be(1);
+        line.SizeChot.Should().Be("M");
+        line.GiaChot.Should().Be(350000m);
+        line.ThanhPhan.Should().HaveCount(2).And.OnlyContain(c => c.TrangThai == "CHO_THUC_HIEN");
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        (await db.DonDatLichSet.SingleAsync()).TongTamTinh.Should().Be(350000m);
+    }
+
+    [Fact]
+    public async Task CheckIn_ComboComponentRequiresVaccination_WithoutProofReturns400ValidationFailed()
+    {
+        using var factory = CareTestSupport.Create(db =>
+        {
+            SeedCheckinScenario(db);
+            var oldLine = db.DichVuTrongDonSet.Single();
+            db.DichVuTrongDonSet.Remove(oldLine);
+
+            var vaccineService = new DichVu
+            {
+                Id = 2,
+                TenDichVu = "Cắt tỉa yêu cầu tiêm",
+                LoaiDichVu = "SPA",
+                ThoiLuongPhut = 45,
+                IsActive = true,
+                YeuCauTiemChung = true
+            };
+            db.DichVuSet.Add(vaccineService);
+
+            var combo = new Combo
+            {
+                Id = 1,
+                TenCombo = "Combo Bảo Vệ",
+                IsActive = true
+            };
+            db.ComboSet.Add(combo);
+
+            var comboLine = new DichVuTrongDon
+            {
+                Id = 101,
+                RequestId = Guid.NewGuid(),
+                ChiTietDonId = 10,
+                ComboId = combo.Id,
+                KhungGioId = 1,
+                TenSnapshot = combo.TenCombo,
+                BangGiaSizeSnapshot = "{\"S\":250000,\"M\":350000}",
+                ThoiLuongSnapshot = 60,
+                TrangThai = OrderServiceState.CHO_THUC_HIEN,
+                SizeChot = SizeBand.S,
+                GiaChot = 250000m
+            };
+            db.DichVuTrongDonSet.Add(comboLine);
+            db.ThanhPhanDichVuTrongDonSet.Add(new ThanhPhanDichVuTrongDon
+            {
+                Id = 1001,
+                DichVuTrongDonId = comboLine.Id,
+                DichVuId = vaccineService.Id,
+                TenSnapshot = vaccineService.TenDichVu,
+                GiaLeSizeSnapshot = "{\"S\":150000,\"M\":200000}",
+                ThoiLuongSnapshot = 45,
+                TrangThai = OrderServiceState.CHO_THUC_HIEN
+            });
+            db.SaveChanges();
+        });
+        using var client = CreateAuthorizedClient(factory);
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
+        body!.ErrorCode.Should().Be("VALIDATION_FAILED");
+    }
+
+    [Fact]
+    public async Task CheckIn_HotelOnly_SetsCommittedRoomRateAndHcmNightsWithoutDoubleCounting()
+    {
+        using var factory = CareTestSupport.Create(db =>
+        {
+            SeedCheckinScenario(db);
+            db.DichVuTrongDonSet.Remove(db.DichVuTrongDonSet.Single());
+
+            var roomType = new LoaiPhong
+            {
+                Id = 1,
+                TenPhong = "Phòng VIP Chó",
+                GiaMoiDem = 300000m,
+                SoLuongPhong = 5,
+                IsActive = true
+            };
+            db.LoaiPhongSet.Add(roomType);
+
+            var booking = db.DonDatLichSet.Single();
+            // 2026-11-20 18:00 UTC = 2026-11-21 01:00 HCM -> 2026-11-22 18:00 UTC = 2026-11-23 01:00 HCM (2 nights in HCM)
+            // If UTC .Date were wrongly used (Nov 20 to Nov 22 -> also 2), test 16:00 UTC vs 18:00 UTC:
+            // Start: 2026-11-20 18:00 UTC (Nov 21 HCM), End: 2026-11-22 15:00 UTC (Nov 22 HCM) => 1 night in HCM vs 2 nights in UTC!
+            booking.BatDauDuKien = new DateTimeOffset(2026, 11, 20, 18, 0, 0, TimeSpan.Zero);
+            booking.KetThucDuKien = new DateTimeOffset(2026, 11, 22, 15, 0, 0, TimeSpan.Zero);
+            booking.TongTamTinh = 280000m;
+
+            var pet = db.ChiTietDonSet.Single();
+            pet.LoaiPhongId = roomType.Id;
+            pet.GiaPhongCamKet = 280000m;
+            db.SaveChanges();
+        });
+        using var client = CreateAuthorizedClient(factory);
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<BookingPet>>();
+        body!.Data!.MaLoaiPhong.Should().Be(1);
+        body.Data.DichVu.Should().BeEmpty();
+
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        var savedPet = await db.ChiTietDonSet.SingleAsync();
+        savedPet.GiaPhongChot.Should().Be(280000m);
+        savedPet.SoDemChot.Should().Be(1);
+        (await db.DonDatLichSet.SingleAsync()).TongTamTinh.Should().Be(280000m);
+    }
+
+    [Fact]
+    public async Task CheckIn_HotelAndSpa_UpdatesSpaDeltaWithoutDoublingRoomRate()
+    {
+        using var factory = CareTestSupport.Create(db =>
+        {
+            SeedCheckinScenario(db);
+            var roomType = new LoaiPhong
+            {
+                Id = 1,
+                TenPhong = "Phòng Tiêu Chuẩn",
+                GiaMoiDem = 200000m,
+                SoLuongPhong = 5,
+                IsActive = true
+            };
+            db.LoaiPhongSet.Add(roomType);
+
+            var booking = db.DonDatLichSet.Single();
+            booking.BatDauDuKien = new DateTimeOffset(2026, 11, 20, 2, 0, 0, TimeSpan.Zero);
+            booking.KetThucDuKien = new DateTimeOffset(2026, 11, 22, 2, 0, 0, TimeSpan.Zero);
+            // Spa S (150k) + Hotel 2 nights (2 * 200k = 400k) = 550k
+            booking.TongTamTinh = 550000m;
+
+            var pet = db.ChiTietDonSet.Single();
+            pet.LoaiPhongId = roomType.Id;
+            pet.GiaPhongCamKet = 200000m;
+            pet.SoDemChot = 2;
+            db.SaveChanges();
+        });
+        using var client = CreateAuthorizedClient(factory);
+        using var form = BuildCheckinForm(CreateValidPayload(), ValidPngBytes);
+
+        var response = await client.PostAsync("/api/internal/booking-pets/10/check-in", form);
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        var savedPet = await db.ChiTietDonSet.SingleAsync();
+        savedPet.GiaPhongChot.Should().Be(200000m);
+        savedPet.SoDemChot.Should().Be(2);
+        // Spa M (200k) - Spa S (150k) = +50k => 600k
+        (await db.DonDatLichSet.SingleAsync()).TongTamTinh.Should().Be(600000m);
+    }
 }
