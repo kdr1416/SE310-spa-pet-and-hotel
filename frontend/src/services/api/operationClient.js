@@ -1,6 +1,7 @@
 import { IS_MOCK_ENABLED } from "./httpClient";
 import { mockCall } from "../mock/mockRepository";
 import { getStoredLiveRoleForDemoActor } from "../../stores/auth";
+import { callPhase2Operation, supportsPhase2Action } from "./phase2Adapter";
 import {
   callSprint1Operation,
   isSprint1Mutation,
@@ -27,6 +28,9 @@ function notifyWorkspaceUpdated() {
 }
 
 export async function callOperation(action, payload = {}, isPublic = false) {
+  if (!IS_MOCK_ENABLED && supportsPhase2Action(action)) {
+    return callPhase2Operation(action, payload);
+  }
   if (!IS_MOCK_ENABLED && supportsSprint1Action(action)) {
     const result = await callSprint1Operation(action, payload);
     if (!isPublic && result.success === true && isSprint1Mutation(action)) {
@@ -65,7 +69,7 @@ export async function callOperation(action, payload = {}, isPublic = false) {
   const data = expectedRole
     ? await mockCall(action, payload, actor, { expectedRole })
     : await mockCall(action, payload, actor);
-  if (!isPublic && !action.startsWith("get")) {
+  if (!isPublic && !action.startsWith("get") && !supportsPhase2Action(action)) {
     notifyWorkspaceUpdated();
   }
   return { success: true, data, message: "Đã lưu dữ liệu mock.", errors: [] };

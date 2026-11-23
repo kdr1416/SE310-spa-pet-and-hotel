@@ -145,7 +145,10 @@ router.beforeEach(async (to) => {
   document.title = (to.meta.title || "PetSpa") + " · PetSpa & Hotel";
   if (to.meta.requiresAuth && !auth.isAuthenticated)
     return { path: "/login", query: { redirect: to.fullPath } };
-  const home = auth.isAdmin ? "/admin/overview" : "/staff/overview";
+  const home = auth.isAdmin ? "/admin/overview"
+    : auth.can("BOOKING_READ") ? "/staff/overview"
+    : auth.can("CARE_UPDATE") ? "/staff/care-tasks"
+    : "/staff/settings";
   if (to.meta.guestOnly && auth.isAuthenticated) return home;
   if (
     (to.meta.roles && !to.meta.roles.includes(auth.user?.vaiTro)) ||

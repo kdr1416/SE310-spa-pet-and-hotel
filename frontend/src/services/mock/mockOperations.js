@@ -129,6 +129,26 @@ export function execute(s, action, p = {}, actorId = null, now = Date.now()) {
   const allow = (c) => requireAccess(actor, c);
   const timestamp = new Date(now).toISOString();
   switch (action) {
+    case "getBookingOptions":
+      return { ngay: p.ngay, ca: s.catalog.shifts.filter(shift => shift.isActive !== false).map(shift => ({
+        maCa: shift.id, tenCa: shift.tenCa, gioBatDau: shift.gioBatDau, gioKetThuc: shift.gioKetThuc,
+        maKhungGio: shift.id, moNhanKhach: !s.closedDays[p.ngay],
+      })) };
+    case "getAssignmentCandidates":
+      allow("BOOKING_MANAGE");
+      return s.users.filter(user => user.isActive && user.workGroup === "SPA").map(cleanUser);
+    case "getFurConditions":
+      allow("BOOKING_MANAGE");
+      return [{ ma: "NORMAL", ten: "Bình thường", dangHoatDong: true, choPhepPhuPhiGoRoi: false }];
+    case "listCareTasks": {
+      allow("CARE_UPDATE");
+      const items = s.bookings.flatMap(booking => booking.chiTietDonList)
+        .filter(pet => actor.vaiTro === "ADMIN" || pet.nhanVienId === actor.id)
+        .filter(pet => ["WAITING", "IN_PROGRESS", "PAUSED", "READY"].includes(pet.trangThaiChamSoc))
+        .filter(pet => !p.trangThai || pet.trangThaiChamSoc === p.trangThai);
+      const trang = p.trang ?? 1, kichThuocTrang = p.kichThuocTrang ?? 20;
+      return { items: items.slice((trang - 1) * kichThuocTrang, trang * kichThuocTrang), trang, kichThuocTrang, tongSo: items.length };
+    }
     case "catalog":
       return {
         ...s.catalog,
