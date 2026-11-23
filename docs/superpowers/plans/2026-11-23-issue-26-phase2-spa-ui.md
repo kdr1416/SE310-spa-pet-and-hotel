@@ -10,6 +10,8 @@
 
 **Spec:** [Approved Phase 2](../specs/2026-11-23-issue-26-phase2-spa-ui-design.md). Phase1PR38 chưa merge; nhánh `feat/issue-26-phase2-spa-ui` là stacked branch từ Phase1 + develop `cb25111` (#18/#19), giữ PR38 nguyên vẹn.
 
+**Integration gate:** PR #38 và Phase 2 là hai phần chưa được coi là đã có trên develop. Khi tích hợp vào develop, merge PR #38 trước rồi đồng bộ/review Phase 2; nếu PR #38 được squash merge, kiểm tra lại base/diff của Phase 2 để không đưa lại thay đổi Phase 1. Browser smoke #27 chỉ nghiệm thu bản test chứa đủ hai phase và môi trường #25 sẵn sàng. Có thể dùng preview của nhánh chứa đủ code để test trước merge; không tự merge/push/deploy khi chưa được yêu cầu.
+
 ## Global Constraints
 
 - Chỉ Spa thường live; Hotel/Combo/E05/E16UI/E61UI/phụ phí/OTP ngoài scope. Không mock mutation trên entity live, không suy ID/assignment/đồng thuận.
