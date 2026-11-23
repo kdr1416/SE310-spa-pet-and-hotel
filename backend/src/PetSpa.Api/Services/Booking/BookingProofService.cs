@@ -14,8 +14,35 @@ public sealed record BookingProofScope(int? CustomerId, Dictionary<int, ThuCung>
 public sealed class BookingProofService(PetSpaDbContext db)
 {
     public async Task<BookingProofScope?> ResolveAsync(
-        BookingCreate request, bool lockChallenges, CancellationToken cancellationToken)
+        BookingCreate request, bool lockChallenges, CancellationToken cancellationToken, bool isInternal = false)
     {
+        if (isInternal)
+        {
+            var internalPetIds = request.ThuCung.Where(pet => pet.MaThuCung.HasValue)
+                .Select(pet => pet.MaThuCung!.Value).ToList();
+
+            if (request.MaKhachHang is { } internalCustomerId)
+            {
+                var customer = await db.KhachHangSet.AsNoTracking()
+                    .SingleOrDefaultAsync(c => c.Id == internalCustomerId && c.DeletedAt == null, cancellationToken);
+                if (customer is null)
+                    return null;
+
+                var internalPets = await db.ThuCungSet.AsNoTracking()
+                    .Where(pet => internalPetIds.Contains(pet.Id) && pet.KhachHangId == internalCustomerId && pet.DeletedAt == null)
+                    .ToDictionaryAsync(pet => pet.Id, cancellationToken);
+                if (internalPets.Count != internalPetIds.Count)
+                    return null;
+
+                return new BookingProofScope(internalCustomerId, internalPets, []);
+            }
+
+            if (internalPetIds.Count > 0)
+                return null;
+
+            return new BookingProofScope(null, [], []);
+        }
+
         var settings = await db.CauHinhHeThongSet.Where(setting => setting.Khoa == "EXTENSION_SETTINGS")
             .Select(setting => setting.GiaTri).SingleOrDefaultAsync(cancellationToken);
         var otpRequired = false;
@@ -33,21 +60,21 @@ public sealed class BookingProofService(PetSpaDbContext db)
         }
 
         var existingPetIds = request.ThuCung.Where(pet => pet.MaThuCung.HasValue)
-            .Select(pet => pet.MaThuCung!.Value).ToArray();
+            .Select(pet => pet.MaThuCung!.Value).ToList();
         if ((otpRequired && request.BookingProof is null)
-            || ((existingPetIds.Length > 0 || request.MaKhachHang.HasValue
+            || ((existingPetIds.Count > 0 || request.MaKhachHang.HasValue
                 || request.ThuCung.Any(pet => pet.MaHoSoTiemChung.HasValue)) && request.PetProof is null))
             return null;
 
         var bookingDigest = Digest(request.BookingProof);
         var petDigest = Digest(request.PetProof);
-        var digests = new[] { bookingDigest, petDigest }.OfType<string>().Distinct().ToArray();
-        if (digests.Length == 0)
+        var digests = new[] { bookingDigest, petDigest }.OfType<string>().Distinct().ToList();
+        if (digests.Count == 0)
             return new BookingProofScope(null, [], []);
 
         if (lockChallenges)
             await db.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT 1 FROM otp_challenge WHERE proof_digest = ANY({digests}) ORDER BY id FOR UPDATE", cancellationToken);
+                $"SELECT 1 FROM otp_challenge WHERE proof_digest = ANY({digests.ToArray()}) ORDER BY id FOR UPDATE", cancellationToken);
 
         var now = DateTimeOffset.UtcNow;
         var email = request.LienHe.Email.ToLowerInvariant();
@@ -77,13 +104,13 @@ public sealed class BookingProofService(PetSpaDbContext db)
         var pets = await db.ThuCungSet.AsNoTracking()
             .Where(pet => existingPetIds.Contains(pet.Id) && pet.KhachHangId == customerId && pet.DeletedAt == null)
             .ToDictionaryAsync(pet => pet.Id, cancellationToken);
-        if (pets.Count != existingPetIds.Length)
+        if (pets.Count != existingPetIds.Count)
             return null;
 
         var vaccinations = request.ThuCung.Where(pet => pet.MaHoSoTiemChung.HasValue).ToArray();
         if (vaccinations.Length > 0)
         {
-            var ids = vaccinations.Select(pet => pet.MaHoSoTiemChung!.Value).ToArray();
+            var ids = vaccinations.Select(pet => pet.MaHoSoTiemChung!.Value).ToList();
             var owners = await db.HoSoTiemChungSet.AsNoTracking().Where(record => ids.Contains(record.Id))
                 .ToDictionaryAsync(record => record.Id, record => record.ThuCungId, cancellationToken);
             if (vaccinations.Any(pet => !owners.TryGetValue(pet.MaHoSoTiemChung!.Value, out var petId)

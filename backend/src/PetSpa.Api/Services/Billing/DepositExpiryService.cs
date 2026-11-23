@@ -52,7 +52,8 @@ public sealed class DepositExpiryService(PetSpaDbContext context, DbContextOptio
             // Booking can move or release its target resources while this sweep waits for the booking lock.
             if (filtered)
             {
-                ids = await WithTargetResources(context.DonDatLichSet.AsNoTracking().Where(b => ids.Contains(b.Id)), targetSlots, targetRooms)
+                var currentIds = ids.ToList();
+                ids = await WithTargetResources(context.DonDatLichSet.AsNoTracking().Where(b => currentIds.Contains(b.Id)), targetSlots, targetRooms)
                     .OrderBy(b => b.Id).Select(b => b.Id).ToArrayAsync(ct);
                 if (ids.Length == 0)
                 {
@@ -61,17 +62,25 @@ public sealed class DepositExpiryService(PetSpaDbContext context, DbContextOptio
                 }
             }
 
-            var intakeSlots = await context.DonDatLichSet.AsNoTracking().Where(b => ids.Contains(b.Id)).Select(b => b.KhungGioId).ToArrayAsync(ct);
-            var serviceSlots = await context.DichVuTrongDonSet.AsNoTracking().Where(s => ids.Contains(s.ChiTietDon.DonDatLichId))
+            var lockedIds = ids.ToList();
+            var intakeSlots = await context.DonDatLichSet.AsNoTracking().Where(b => lockedIds.Contains(b.Id)).Select(b => b.KhungGioId).ToArrayAsync(ct);
+            var serviceSlots = await context.DichVuTrongDonSet.AsNoTracking().Where(s => lockedIds.Contains(s.ChiTietDon.DonDatLichId))
                 .Select(s => s.KhungGioId).ToArrayAsync(ct);
             var slots = intakeSlots.Concat(serviceSlots).Distinct().Order().ToArray();
-            await context.Database.SqlQuery<int>($"SELECT id AS \"Value\" FROM khung_gio_dat_lich WHERE id = ANY({slots}) ORDER BY id FOR UPDATE").ToListAsync(ct);
-            await context.KhungGioDatLichSet.Where(s => slots.Contains(s.Id)).LoadAsync(ct);
-            var rooms = await context.ChiTietDonSet.AsNoTracking().Where(p => ids.Contains(p.DonDatLichId) && p.LoaiPhongId.HasValue)
+            var lockedSlots = slots.ToList();
+            if (context.Database.IsRelational())
+            {
+                await context.Database.SqlQuery<int>($"SELECT id AS \"Value\" FROM khung_gio_dat_lich WHERE id = ANY({slots}) ORDER BY id FOR UPDATE").ToListAsync(ct);
+            }
+            await context.KhungGioDatLichSet.Where(s => lockedSlots.Contains(s.Id)).LoadAsync(ct);
+            var rooms = await context.ChiTietDonSet.AsNoTracking().Where(p => lockedIds.Contains(p.DonDatLichId) && p.LoaiPhongId.HasValue)
                 .Select(p => p.LoaiPhongId!.Value).Distinct().ToArrayAsync(ct);
-            await new HotelCapacityCalculator(context).LockRoomTypesAsync(rooms, ct);
-            await context.Database.SqlQuery<int>($"SELECT id AS \"Value\" FROM tien_coc WHERE don_dat_lich_id = ANY({ids}) ORDER BY don_dat_lich_id FOR UPDATE").ToListAsync(ct);
-            var bookings = await context.DonDatLichSet.Where(b => ids.Contains(b.Id))
+            if (context.Database.IsRelational())
+            {
+                await new HotelCapacityCalculator(context).LockRoomTypesAsync(rooms, ct);
+                await context.Database.SqlQuery<int>($"SELECT id AS \"Value\" FROM tien_coc WHERE don_dat_lich_id = ANY({ids}) ORDER BY don_dat_lich_id FOR UPDATE").ToListAsync(ct);
+            }
+            var bookings = await context.DonDatLichSet.Where(b => lockedIds.Contains(b.Id))
                 .Include(b => b.TienCocDonDatLich).ThenInclude(d => d!.GiaoDichThuTienCocItems)
                 .Include(b => b.TienCocDonDatLich).ThenInclude(d => d!.HoanCocTienCocItems)
                 .Include(b => b.ChiTietDonDonDatLichItems).ThenInclude(p => p.DichVuTrongDonChiTietDonItems)
@@ -139,10 +148,14 @@ public sealed class DepositExpiryService(PetSpaDbContext context, DbContextOptio
     private static bool IsDue(DonDatLich booking, DateTimeOffset now) => booking.TrangThai == BookingState.PENDING &&
         booking.TienCocDonDatLich is { TrangThaiYeuCau: DepositRequestState.CHO_THU } deposit && deposit.HetHanAt <= now;
 
-    private static IQueryable<DonDatLich> WithTargetResources(IQueryable<DonDatLich> bookings, int[] slots, int[] rooms) =>
-        bookings.Where(b => b.ChiTietDonDonDatLichItems.Any(p =>
-            p.LoaiPhongId.HasValue && rooms.Contains(p.LoaiPhongId.Value) &&
+    private static IQueryable<DonDatLich> WithTargetResources(IQueryable<DonDatLich> bookings, int[] slots, int[] rooms)
+    {
+        var slotList = slots.ToList();
+        var roomList = rooms.ToList();
+        return bookings.Where(b => b.ChiTietDonDonDatLichItems.Any(p =>
+            p.LoaiPhongId.HasValue && roomList.Contains(p.LoaiPhongId.Value) &&
                 (p.TrangThaiChamSoc != PetCareState.CANCELLED ||
                     p.CheckInAt != null && (p.TraLaiAt == null || (p.SoDemDaO ?? 0) > 0)) ||
-            p.DichVuTrongDonChiTietDonItems.Any(s => s.TrangThai != OrderServiceState.HUY && slots.Contains(s.KhungGioId))));
+            p.DichVuTrongDonChiTietDonItems.Any(s => s.TrangThai != OrderServiceState.HUY && slotList.Contains(s.KhungGioId))));
+    }
 }

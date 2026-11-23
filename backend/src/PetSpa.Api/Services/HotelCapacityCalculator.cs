@@ -16,7 +16,7 @@ public sealed class HotelCapacityCalculator(PetSpaDbContext context)
         if (checkOutDate <= checkInDate) throw new ArgumentException("Ngày trả phải sau ngày nhận.");
         if (roomTypeIds.Any(id => id <= 0)) throw new ArgumentException("Mã loại phòng phải dương.");
         if (roomTypeIds.Count == 0) return [];
-        var ids = roomTypeIds.Distinct().ToArray();
+        var ids = roomTypeIds.Distinct().ToList();
         var rooms = await context.LoaiPhongSet.AsNoTracking().Where(x => ids.Contains(x.Id)).OrderBy(x => x.Id)
             .Select(x => new { x.Id, x.SoLuongPhong }).ToListAsync(ct);
         var firstNight = new DateTimeOffset(checkInDate.ToDateTime(TimeOnly.MinValue), TimeSpan.FromHours(7)).ToUniversalTime();
