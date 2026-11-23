@@ -1620,3 +1620,106 @@ describe("hybrid-policy", () => {
     expectWorkspaceSignals(1);
   });
 });
+
+describe("notifications", () => {
+  let wrapper, getWorkspace;
+
+  function dispatchWorkspaceUpdate() {
+    window.dispatchEvent(new Event("petspa-workspace-updated"));
+  }
+
+  function dispatchWorkspaceStorageUpdate() {
+    window.dispatchEvent(new StorageEvent("storage", { key: "petspa_workspace_update" }));
+  }
+
+  beforeEach(async () => {
+    vi.resetModules();
+    vi.stubEnv("VITE_USE_MOCK_API", "false");
+    localStorage.clear();
+    vi.spyOn(document, "hidden", "get").mockReturnValue(false);
+    vi.doMock("../../src/stores/auth", () => ({
+      useAuthStore: () => ({
+        user: { vaiTro: "STAFF" },
+        isAuthenticated: true,
+        isAdmin: false,
+        initAuth: async () => {},
+        can: (permission) => permission === "BOOKING_MANAGE",
+      }),
+    }));
+    vi.doMock("vue-router", () => ({ useRouter: () => ({ replace: vi.fn() }) }));
+
+    const { default: client } = await import("../../src/services/api/httpClient");
+    const { bookingService } = await import("../../src/services/api/bookingService");
+    const { default: BookingNotifications } = await import("../../src/components/shared/BookingNotifications.vue");
+    const { mount, flushPromises } = await import("@vue/test-utils");
+    client.defaults.adapter = async (config) => ({
+      config,
+      status: 200,
+      statusText: "OK",
+      headers: {},
+      data: {
+        success: true,
+        data: { items: [], trang: 1, kichThuocTrang: 100, tongSo: 0 },
+        message: "Thành công",
+      },
+    });
+    getWorkspace = vi.spyOn(bookingService, "getWorkspace");
+
+    vi.useFakeTimers();
+    wrapper = mount(BookingNotifications, { global: { stubs: { RouterLink: true } } });
+    await flushPromises();
+    expect(getWorkspace).toHaveBeenCalledTimes(1);
+    getWorkspace.mockClear();
+  });
+
+  afterEach(() => {
+    wrapper?.unmount();
+    wrapper = undefined;
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    vi.doUnmock("vue-router");
+    vi.doUnmock("../../src/stores/auth");
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    localStorage.clear();
+  });
+
+  it("waits 300 ms from the last workspace or storage event and refreshes once", async () => {
+    dispatchWorkspaceUpdate();
+    await vi.advanceTimersByTimeAsync(50);
+    dispatchWorkspaceUpdate();
+    await vi.advanceTimersByTimeAsync(50);
+    dispatchWorkspaceUpdate();
+    await vi.advanceTimersByTimeAsync(50);
+    dispatchWorkspaceStorageUpdate();
+
+    await vi.advanceTimersByTimeAsync(299);
+    expect(getWorkspace).not.toHaveBeenCalled();
+
+    await vi.advanceTimersByTimeAsync(1);
+    expect(getWorkspace).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels queued refreshes and ignores subsequent events after unmount", async () => {
+    dispatchWorkspaceStorageUpdate();
+    await vi.advanceTimersByTimeAsync(100);
+    wrapper.unmount();
+    wrapper = undefined;
+
+    dispatchWorkspaceUpdate();
+    dispatchWorkspaceStorageUpdate();
+    await vi.advanceTimersByTimeAsync(300);
+
+    expect(getWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("does not schedule another refresh after a workspace read succeeds", async () => {
+    dispatchWorkspaceUpdate();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(getWorkspace).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(600);
+    expect(getWorkspace).toHaveBeenCalledTimes(1);
+    expect(localStorage.getItem("petspa_workspace_update")).toBeNull();
+  });
+});
