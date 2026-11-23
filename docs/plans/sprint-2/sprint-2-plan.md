@@ -137,7 +137,7 @@ flowchart TD
     I17 --> I27
     I20 --> I27
     I23 --> I27
-    I26 --> UI2["Phase 2: UI Form Integration<br/>Follow-up chưa gán số Issue"]
+    I26 --> UI2["Issue #26 Phase 2: Spa UI<br/>Hotel/Combo nối sau"]
     I18 -->|E14 sau khi merge| UI2
 ```
 
@@ -834,7 +834,8 @@ flowchart TD
 #### Handoff Issue #26 (2026-11-23)
 
 - **Phase 1 (#26):** Nghiệm thu transport/adapter của đủ 15 operations, cách ly live/demo, validation và sự kiện theo [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
-- **Phase 2 (UI Form Integration, chưa gán số Issue):** Bổ sung nguồn slot động hoặc ánh xạ `maKhungGio` đã xác minh, phân trang UI, form check-in (`anhTiepNhan`, `ghiChuSucKhoe`, `quyetDinhGia`, `xacNhanKhach`), `invoiceId` và số tiền thực thu/trả thừa trên form thanh toán, thao tác bàn giao `E19` sau `PAID`, cùng danh sách ứng viên `E14` sau khi #18 merge.
+- **Phase 2 Spa (#26, duyệt 2026-11-23):** Theo [spec](../../superpowers/specs/2026-11-23-issue-26-phase2-spa-ui-design.md) và [plan inline](../../superpowers/plans/2026-11-23-issue-26-phase2-spa-ui.md). E64 cấp slot thật theo ngày; E62 đọc cấu hình lông; E38 lọc assignment trước phân trang/ký ảnh. UI Spa nối E03/E04 → E11 → E14/E62/E15 → E38/E17/E18 → E23/E24/E26 → E19. Hotel/Combo, cọc và phụ phí UI nối sau theo #15/#23; không coi #18 còn thiếu vì các endpoint đọc bổ sung này.
+- **Kiểm chứng Phase 2 (2026-11-23):** Backend 425/425 và frontend 272/272 PASS, production build PASS; registry 71 unique operations. Component/adapter integration dùng transport double; luồng Spa hai pet trong `SpaFlowTests` chạy HTTP/PostgreSQL thật với media/email double. Browser kiểm tra form public live ở 1280px/390px và trạng thái backend offline, không tràn ngang. Chưa nghiệm thu smoke Supabase/SMTP thật; không tự merge PR #38 hoặc push nhánh Phase 2.
 
 ---
 
