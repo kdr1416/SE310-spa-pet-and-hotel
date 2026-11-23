@@ -822,6 +822,7 @@ describe("commands-booking", () => {
     const vaccine = new File(["vaccination record"], "vaccine.png", { type: "image/png" });
     const payload = {
       requestId, maKhungGio: 701, shiftId: 1, ngayTra: "2026-11-23", actor: 1,
+      date: "2026-11-21", checkout: "2026-11-25",
       lienHe: { ...contact, soDienThoai: "090-123 4567", id: 205 },
       thuCung: [{
         tenThuCung: "Miu", loaiPet: "MEO", canNangKhaiBao: 5, ghiChuDiUng: null,
@@ -909,6 +910,39 @@ describe("commands-booking", () => {
       },
     });
   });
+
+  it.each([
+    ["uses the intake date for Spa-only", { type: "SPA" }, {}, "2026-11-23"],
+    ["preserves an explicit ngayTra", { type: "SPA" }, { ngayTra: "2026-11-25" }, "2026-11-25"],
+    ["preserves checkout for Hotel", { type: "HOTEL" }, {}, "2026-11-24"],
+  ])("%s when the legacy form has different date and checkout values", async (_name, selection, dateOverride, ngayTra) => {
+    const payload = {
+      requestId, maKhungGio: 701, date: "2026-11-23", checkout: "2026-11-24",
+      customer: { name: contact.hoTen, phone: contact.soDienThoai, email: contact.email },
+      pets: [{ name: "Miu", species: "MEO", weight: 5, serviceId: 11, roomId: 8, ...selection }],
+      ...dateOverride,
+    };
+
+    await callOperation("createBooking", payload, true);
+
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(adapter.mock.calls[0][0].data.get("payload")).ngayTra).toBe(ngayTra);
+  });
+
+  it("rejects a legacy Spa-only booking without an intake date even when checkout is set", async () => {
+    const payload = {
+      requestId, maKhungGio: 701, checkout: "2026-11-24",
+      customer: { name: contact.hoTen, phone: contact.soDienThoai, email: contact.email },
+      pets: [{ type: "SPA", name: "Miu", species: "MEO", weight: 5, serviceId: 11, roomId: 8 }],
+    };
+
+    await expect(callOperation("createBooking", payload, true)).rejects.toMatchObject({
+      success: false, data: null, errorCode: "VALIDATION_FAILED",
+      errors: [{ field: "ngayTra", message: expect.any(String) }],
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
 
   it.each([
     [{ date: "2026-11-23", shiftId: 1 }, "maKhungGio", "MISSING_SLOT_MAPPING"],

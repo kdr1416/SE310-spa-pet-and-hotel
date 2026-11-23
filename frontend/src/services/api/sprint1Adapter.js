@@ -200,6 +200,17 @@ function toBookingDto(payload, vaccinationFiles) {
   };
 
   const pets = payload.thuCung ?? payload.pets ?? [];
+  const legacySpaOnly = payload.thuCung == null && pets.length > 0
+    && pets.every((pet) => pet.type === "SPA" && pet.maLoaiPhong == null);
+  let ngayTra = payload.ngayTra ?? payload.checkout;
+  if (payload.ngayTra == null && legacySpaOnly) {
+    // The legacy form keeps a next-day checkout value hidden for Spa-only bookings.
+    ngayTra = payload.date;
+    if (typeof ngayTra !== "string" || !ngayTra.trim()) {
+      throw validationError("ngayTra", "Cần ngày tiếp nhận cho lịch chỉ đặt dịch vụ Spa.");
+    }
+  }
+
   const namedFiles = payload.files ?? {};
   const explicitKeys = new Set(pets.map((pet) => pet.vaccinationFileKey));
   const thuCung = pets.map((pet, index) => {
@@ -229,7 +240,7 @@ function toBookingDto(payload, vaccinationFiles) {
     requestId: ensureRequestId(payload),
     lienHe: contact,
     maKhungGio,
-    ngayTra: payload.ngayTra ?? payload.checkout,
+    ngayTra,
     thuCung,
     ghiChu: payload.ghiChu,
     bookingProof: payload.bookingProof,
