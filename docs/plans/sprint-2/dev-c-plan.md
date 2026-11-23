@@ -25,6 +25,15 @@
 
 ---
 
+## Handoff Issue #26 (2026-11-23)
+
+- **Phase 1 (#26):** Giữ `E23` lập hóa đơn, `E26` thu tiền và `E19` bàn giao là các thao tác riêng. `E26` dùng ID từ hóa đơn thật và từ chối trước HTTP khi thiếu `invoiceId`, phương thức hoặc số tiền thực thu/trả thừa bắt buộc. `E26` chuyển hóa đơn sang `PAID`. `E19` xác nhận thực nhận và bàn giao pet.
+- **Phase 2 (UI Form Integration, chưa gán số Issue):** Handoff `invoiceId` và các trường số tiền từ `E23/E24` (gồm `conPhaiTra` sau khấu trừ cọc) cho form thanh toán. Form tiền mặt thu `soTienThucNhan` và `soTienDaTraLai`. Sau khi hóa đơn `PAID`, UI cho phép thao tác bàn giao riêng qua `E19`.
+
+Tham chiếu [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
+
+---
+
 ## 0. Điều Kiện Bắt Đầu & Quy Tắc Bắt Buộc
 
 1. **Cửa khóa Ngày 1 (Chờ Issue #14 merge):** Chỉ tạo nhánh tính năng sau khi Tech Lead đã merge **Issue #14 (Foundation)** vào `origin/develop`. Luôn đồng bộ trước khi cắt nhánh:
