@@ -564,20 +564,22 @@ describe("Sprint 1 reads", () => {
     expect(catalog.dichVu[0]).not.toHaveProperty("id");
   });
 
-  it("posts only the AvailabilityQuery fields with the supplied booking and service slot IDs", async () => {
+  it("posts Spa demand with the supplied booking and distinct service slot IDs", async () => {
     const availability = { maKhungGio: 73, slotConLai: 3, phutConLai: 70, phong: [], coTheDat: true, lyDo: null };
     const { adapter, envelope } = respondWith(availability);
-
-    const result = await callOperation("checkAvailability", {
+    const payload = {
       date: "2026-11-23",
       shiftId: 1,
       maKhungGio: 73,
       ngayTra: "2026-11-24",
       thuCung: [
-        { maLoaiPhong: 13, tenThuCung: "Miu", dichVu: [] },
-        { dichVu: [{ maDichVu: 11, maKhungGio: 81, shiftId: 2, estimatedPrice: 100000 }] },
+        { tenThuCung: "Miu", dichVu: [{ maDichVu: 11, maKhungGio: 81, shiftId: 2, estimatedPrice: 100000 }] },
+        { dichVu: [{ maDichVu: 14, maKhungGio: 82 }] },
       ],
-    }, true);
+    };
+    const original = JSON.parse(JSON.stringify(payload));
+
+    const result = await callOperation("checkAvailability", payload, true);
 
     expect(adapter).toHaveBeenCalledTimes(1);
     const [config] = adapter.mock.calls[0];
@@ -586,11 +588,45 @@ describe("Sprint 1 reads", () => {
       maKhungGio: 73,
       ngayTra: "2026-11-24",
       thuCung: [
-        { maLoaiPhong: 13, dichVu: [] },
         { dichVu: [{ maDichVu: 11, maKhungGio: 81 }] },
+        { dichVu: [{ maDichVu: 14, maKhungGio: 82 }] },
       ],
     });
+    expect(payload).toStrictEqual(original);
     expect(result).toEqual(envelope);
+  });
+
+  it("rejects availability requested with only a display shift and date", async () => {
+    const { adapter } = respondWith(null);
+
+    await expect(callOperation("checkAvailability", {
+      shiftId: 1, date: "2026-11-23",
+    }, true)).rejects.toMatchObject({
+      success: false,
+      data: null,
+      errorCode: "MISSING_SLOT_MAPPING",
+      errors: [{ field: "maKhungGio", message: expect.any(String) }],
+    });
+    expect(adapter).not.toHaveBeenCalled();
+  });
+
+  it("rejects availability when a service has no slot even if the booking has one", async () => {
+    const { adapter } = respondWith(null);
+    const payload = {
+      maKhungGio: 73,
+      ngayTra: "2026-11-24",
+      thuCung: [{ dichVu: [{ maDichVu: 11, shiftId: 2 }] }],
+    };
+    const original = JSON.parse(JSON.stringify(payload));
+
+    await expect(callOperation("checkAvailability", payload, true)).rejects.toMatchObject({
+      success: false,
+      data: null,
+      errorCode: "MISSING_SLOT_MAPPING",
+      errors: [{ field: "thuCung[0].dichVu[0].maKhungGio", message: expect.any(String) }],
+    });
+    expect(adapter).not.toHaveBeenCalled();
+    expect(payload).toStrictEqual(original);
   });
 
   it("uses the normalized tracking pair and projects the public-safe result for the UI", async () => {

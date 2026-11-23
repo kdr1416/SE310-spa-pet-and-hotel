@@ -2,12 +2,12 @@ import httpClient from "./httpClient";
 import { mockCaLamViec } from "./mockData";
 import { localDate } from "../../utils/dates";
 
-function validationError(field, message) {
+function validationError(field, message, errorCode = "VALIDATION_FAILED") {
   return {
     success: false,
     data: null,
     message,
-    errorCode: "VALIDATION_FAILED",
+    errorCode,
     errors: [{ field, message }],
   };
 }
@@ -36,15 +36,23 @@ function projectCatalog(catalog) {
   };
 }
 
+function requireSlotId(slotId, field) {
+  if (!Number.isInteger(slotId) || slotId <= 0) {
+    throw validationError(field, "Cần mã khung giờ đặt lịch hợp lệ.", "MISSING_SLOT_MAPPING");
+  }
+}
+
 function checkAvailability({ maKhungGio, ngayTra, thuCung }) {
+  requireSlotId(maKhungGio, "maKhungGio");
   return httpClient.post("/availability", {
     maKhungGio,
     ngayTra,
-    thuCung: thuCung?.map(({ maLoaiPhong, dichVu }) => ({
+    thuCung: thuCung?.map(({ maLoaiPhong, dichVu }, petIndex) => ({
       maLoaiPhong,
-      dichVu: dichVu?.map(({ maDichVu, maCombo, maKhungGio }) => ({
-        maDichVu, maCombo, maKhungGio,
-      })),
+      dichVu: dichVu?.map(({ maDichVu, maCombo, maKhungGio }, serviceIndex) => {
+        requireSlotId(maKhungGio, `thuCung[${petIndex}].dichVu[${serviceIndex}].maKhungGio`);
+        return { maDichVu, maCombo, maKhungGio };
+      }),
     })),
   });
 }
