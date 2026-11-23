@@ -55,4 +55,3 @@ it("clears a previous photo after an invalid replacement and clears selection on
   useAuthStore().user = { maNhanVien: 73, vaiTro: "STAFF", isActive: true, quyen: ["CARE_UPDATE"] }; await flushPromises();
   expect(wrapper.find('[data-testid="action-form"]').exists()).toBe(false);
 });
-

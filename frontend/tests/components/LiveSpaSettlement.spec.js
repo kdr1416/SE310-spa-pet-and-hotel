@@ -69,4 +69,3 @@ it("permits replacing a revoked invoice, and restricts E24 to the read grant", a
   useAuthStore().user.quyen = ["INVOICE_COLLECT"]; await flushPromises();
   expect(wrapper.find('[data-testid="reload-invoice"]').exists()).toBe(false);
 });
-

@@ -94,4 +94,3 @@ function refresh() { if (!locked.value) load(); }
 onMounted(() => { load(); window.addEventListener("petspa-workspace-updated", refresh); });
 onBeforeUnmount(() => window.removeEventListener("petspa-workspace-updated", refresh));
 </script>
-
