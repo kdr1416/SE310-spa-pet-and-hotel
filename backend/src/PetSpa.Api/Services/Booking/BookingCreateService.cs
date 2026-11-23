@@ -316,13 +316,21 @@ public sealed class BookingCreateService(
 
     private async Task<BookingCreateResult?> FindReplayAsync(Guid requestId, string? fingerprint, CancellationToken cancellationToken)
     {
-        var booking = await BookingProjection.IncludeDetails(db.DonDatLichSet).AsNoTracking()
-            .SingleOrDefaultAsync(row => row.RequestId == requestId, cancellationToken);
+        var booking = await db.DonDatLichSet.AsNoTracking().SingleOrDefaultAsync(row => row.RequestId == requestId, cancellationToken);
         if (booking is null)
             return null;
-        if (fingerprint is not null && booking.Fingerprint != fingerprint)
-            return Failure("IDEMPOTENCY_CONFLICT", "RequestId đã được sử dụng với nội dung khác.");
-        return new BookingCreateResult(BookingProjection.Project(booking), Replayed: true);
+        if (!string.Equals(booking.Fingerprint, fingerprint, StringComparison.Ordinal))
+            return Failure("IDEMPOTENCY_CONFLICT", "Mã yêu cầu đã được dùng cho nội dung đặt lịch khác.");
+
+        using var snapshot = JsonDocument.Parse(booking.ChinhSachSnapshot);
+        if (snapshot.RootElement.ValueKind == JsonValueKind.Object
+            && snapshot.RootElement.TryGetProperty("creationResponse", out var created)
+            && created.Deserialize<BookingResponse>(JsonOptions) is { } response)
+            return new BookingCreateResult(response with { EmailDelivery = booking.EmailDelivery ?? "FAILED" }, Replayed: true);
+
+        var legacy = await BookingProjection.IncludeDetails(db.DonDatLichSet).AsNoTracking()
+            .SingleAsync(row => row.Id == booking.Id, cancellationToken);
+        return new BookingCreateResult(BookingProjection.Project(legacy), Replayed: true);
     }
 
     private Task LockRequestKeyAsync(Guid requestId, CancellationToken cancellationToken)
