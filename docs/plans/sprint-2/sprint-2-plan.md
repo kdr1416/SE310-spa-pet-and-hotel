@@ -750,6 +750,10 @@ flowchart TD
 - **Dependencies:** Issue #14 đã merge.
 - **Scope:** Cấu hình hạ tầng Staging trên Neon PostgreSQL (migration qua cổng direct `5432`, runtime qua cổng pooler `6543`), và thêm bộ smoke test xác minh thật (opt-in qua biến môi trường) cho Neon + Supabase Storage + MailKit SMTP (đã được nâng cấp ở Task 1 / Issue #14).
 
+**Handoff browser smoke #26 → #27 (chốt 2026-11-23):** #25 chuẩn bị môi trường; #27 thực hiện nghiệm thu browser có đăng nhập. Trước khi bàn giao, xác nhận backend chạy và kết nối Neon test/staging đã migrate/seed, frontend live trỏ đúng backend với `VITE_USE_MOCK_API=false` và CORS hợp lệ, tài khoản test có quyền lễ tân/thu ngân và Staff chăm sóc cùng ca APPROVED, private bucket/Signed URL và hộp thư SMTP test đã qua live spike. Chỉ bàn giao thông tin cấu hình không nhạy cảm và cách cấp tài khoản test, không ghi credentials vào plan. PostgreSQL local thật đã được dùng trong test #26; phần chưa nghiệm thu là môi trường tích hợp live và browser đăng nhập.
+
+- [ ] Bàn giao môi trường sẵn sàng và kết quả live spike cho checklist browser Spa ở **#27 – Task 14, Step 3b**. Nếu môi trường chưa sẵn sàng, ghi rõ browser smoke là pending, không coi test double hoặc noop spike là đã nghiệm thu live.
+
 **Files:**
 - Modify: `backend/src/PetSpa.Api/appsettings.json`
 - Create: `backend/tests/PetSpa.Tests/Infrastructure/LiveIntegrationSpikeTests.cs`
@@ -844,7 +848,8 @@ flowchart TD
 - **Assignee:** `Tech Lead` *(Cùng Dev A, Dev B, Dev C phối hợp nghiệm thu)*
 - **Branch:** `test/issue-27-e2e-sprint2-flows`
 - **Dependencies:** Toàn bộ Issues #14 $\rightarrow$ #26 (Phase 1) đã merge vào `develop`.
-- **Scope:** Kiểm thử E2E tự động qua HTTP (`PostgresWebApplicationFactory`) bao phủ toàn bộ 29 operations của Sprint 2 và các kịch bản dữ liệu bắt buộc `M2-L01` đến `M2-L09`. Các test này xác minh luồng API backend. Nghiệm thu UI end-to-end thuộc follow-up Phase 2 với kiểm thử component và smoke live trên môi trường test.
+- **Scope:** Kiểm thử E2E tự động qua HTTP (`PostgresWebApplicationFactory`) bao phủ toàn bộ 29 operations của Sprint 2 và các kịch bản dữ liệu bắt buộc `M2-L01` đến `M2-L09`. Bổ sung nghiệm thu browser đăng nhập cho **luồng Spa #26 Phase 2** trên môi trường thật được #25 bàn giao; ghi kết quả riêng với bộ test HTTP. Hotel/Combo UI vẫn là follow-up chưa thuộc checklist Spa này.
+- **Điều kiện chạy browser Spa:** #25 hoàn tất handoff môi trường ở Task 12; bản frontend/backend #26 Phase 2 Spa đã được tích hợp vào môi trường test. Có thể chạy checklist Spa ngay khi đủ hai điều kiện này, không phải chờ frontend Hotel/Combo.
 
 **Files:**
 - Create: `backend/tests/PetSpa.Tests/Flows/Sprint2HotelComboFlowTests.cs`
@@ -877,6 +882,16 @@ flowchart TD
   - Expected: `0 errors, 0 warnings`, 100% xUnit và Vitest tests PASS.
 - [ ] **Step 4: Commit**
   - `git commit -m "test(e2e): add Sprint 2 end-to-end integration tests for hotel, deposit, combo, and single-pet cancellation"`
+
+**Step 3b — Browser smoke có đăng nhập: nghiệm thu live còn lại từ #26 Phase 2 (Tech Lead + nhóm)**
+
+- [ ] Xác nhận frontend dùng `VITE_USE_MOCK_API=false`, gọi backend test/staging thật và đọc/ghi Neon test/staging; không dùng transport/media/email doubles cho lượt nghiệm thu này.
+- [ ] Khách tạo lịch Spa hai pet bằng slot thật, nhận tracking code và email trong hộp thư test; lỗi gửi email không làm mất booking hoặc tracking code.
+- [ ] Đăng nhập tài khoản lễ tân: tìm/duyệt đúng booking, lấy ứng viên ca hiện tại, nhập đủ dữ liệu và đồng thuận check-in từng pet; ảnh tiếp nhận được upload lên private bucket thật.
+- [ ] Đăng nhập Staff được phân công: E38 chỉ hiện công việc hợp lệ; chạy START/PAUSE/RESUME/READY và nhật ký, kiểm tra ảnh thật qua Signed URL. Tài khoản/assignment không hợp lệ không đọc hoặc sửa được công việc của người khác.
+- [ ] Đăng nhập tài khoản có quyền thu ngân: lập hóa đơn, kiểm tra dòng tiền/QR backend, nhập khoản thu và tiền trả lại bằng dữ liệu test; PAID không tự bàn giao. Xác nhận nhận từng pet riêng, chỉ pet cuối mới khép đơn; khách tra cứu thấy trạng thái tương ứng.
+- [ ] Kiểm tra đổi tài khoản/đăng xuất giữa hai tab, thông báo và phân trang, lỗi 403/409, retry cùng requestId khi chưa rõ kết quả; dữ liệu và form của phiên trước phải được xóa. Kiểm tra desktop/mobile và thao tác bàn phím trên các form đăng nhập/check-in/thanh toán.
+- [ ] Ghi ngày chạy, phiên bản frontend/backend, môi trường, vai trò test, kết quả từng bước và bằng chứng đã che thông tin nhạy cảm vào nghiệm thu #27. Lỗi UI/adapter chuyển về #26; lỗi môi trường/Supabase/SMTP về #25; lỗi nghiệp vụ về issue backend tương ứng. Để checklist chưa tick nếu chưa chạy hoặc còn blocker; không dùng kết quả xUnit/Vitest thay cho browser smoke.
 
 ---
 
