@@ -1,5 +1,7 @@
 # KẾ HOẠCH SPRINT 2 — PETSPA & HOTEL (MILESTONE 4 - ĐỢT 2)
 
+**Amendment Phase2 Spa UI (duyệt 2026-11-23):** E64 mới và E38/E62 đưa lên Sprint2; phân bổ hiện hành 15/32/24=71 operations. Tổng29/68 ở phần baseline dưới đây giữ lịch sử; implementation Phase2 theo docs/superpowers/plans/2026-11-23-issue-26-phase2-spa-ui.md, executing-plans inline. Nhánh riêng stacked Phase1PR38 + develop#18/#19, không tự mergePR38. Schema và nghiệp vụ đóng băng giữ nguyên.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Triển khai hoàn chỉnh 29 operations của Sprint 2 (Hotel, Cọc 30% & Hoàn cọc, Combo `E61`, Dịch vụ phát sinh & Phụ phí, Thu hồi hóa đơn `E25`, Ngoại lệ thú cưng `E47–E49`, Ca làm việc `E27–E29/E54–E55`), gỡ 6 chốt chặn cứng từ Sprint 1, dựng Staging Neon PostgreSQL + Spike Supabase/SMTP thật và nối Frontend Vue 3 theo Hybrid Routing cho 15 operations Sprint 1.

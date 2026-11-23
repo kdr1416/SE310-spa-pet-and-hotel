@@ -92,4 +92,6 @@ Các kịch bản M2-L01–09 ở system-design bổ sung test dữ liệu. Ở 
 
 ## 3. Cửa duyệt
 
+Amendment Phase2SpaUI được duyệt 2026-11-23: UC14/23B → E64 booking options; UC23 → E62 fur conditions; UC53 → E38 assignment-filtered tasks. D03/D04/D09/D11/D12/D15/D17 áp dụng. Acceptance P2-01..P2-10 ở `docs/superpowers/specs/2026-11-23-issue-26-phase2-spa-ui-design.md`; cần xUnit endpoint và Vitest/component tests trước nghiệm thu. Tổng hiện hành71operations (15/32/24), schema33bảng; tổng68 bên dưới chỉ giữ lịch sử M2-15.
+
 Baseline M2 đã được nhóm trưởng duyệt theo M2-15, gồm 33 bảng và 68 operations. Các kịch bản ở đây là yêu cầu kiểm chứng cho implementation, không phải kết quả tests. Mermaid chưa render được ghi nhận tại design mục 9; phê duyệt tài liệu không tự yêu cầu bắt đầu M3.
