@@ -237,6 +237,8 @@ public sealed class BookingManagementService(
         {
             case CancellationType.STAFF_REJECTED when booking.TrangThai != BookingState.PENDING:
                 return InvalidTransition("Chỉ có thể từ chối lịch hẹn đang chờ duyệt.");
+            case CancellationType.STAFF_REJECTED when booking.TienCocDonDatLich is { TrangThaiYeuCau: DepositRequestState.CHO_THU }:
+                return InvalidTransition("Không thể từ chối lịch hẹn khi yêu cầu cọc đang chờ thanh toán.");
             case CancellationType.NO_SHOW when now < booking.MocCuoiCa.AddMinutes(30):
                 return InvalidTransition("Chỉ có thể đánh dấu vắng mặt sau khi ca kết thúc 30 phút.");
             case CancellationType.NO_SHOW when !reason.Equals(NoShowAttestation, StringComparison.OrdinalIgnoreCase) &&
