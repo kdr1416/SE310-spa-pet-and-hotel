@@ -54,7 +54,8 @@ async function load(query = {}) {
 }
 async function changed(change = {}) {
   if (change.booking) selected.value = { ...change.booking };
-  if (change.pet && selected.value) selected.value = { ...selected.value, trangThai: change.trangThai,
+  if (change.invoice && selected.value) selected.value = { ...selected.value, hoaDon: change.invoice };
+  if (change.pet && selected.value) selected.value = { ...selected.value, trangThai: change.reloadOnly ? selected.value.trangThai : change.trangThai,
     thuCung: selected.value.thuCung.map(pet => pet.maChiTietDon === change.pet.maChiTietDon ? change.pet : pet) };
   await load(change.trangThai ? { trangThai: change.trangThai } : {});
 }

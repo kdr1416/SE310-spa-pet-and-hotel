@@ -38,6 +38,7 @@
       </fieldset>
       <button type="submit" class="btn-primary" :disabled="busy || loading || reviewUncertain">{{ intakeUncertain ? 'Thử lại yêu cầu tiếp nhận' : 'Xác nhận tiếp nhận' }}</button>
     </form>
+    <LiveSpaInvoice v-if="!unsupported" :booking="booking" @changed="$emit('changed', $event)" @busy="$emit('busy', $event)" />
   </div>
 </template>
 <script setup>
@@ -47,6 +48,7 @@ import { bookingService } from "@/services/api/bookingService";
 import { catalogService } from "@/services/api/catalogService";
 import { useSpaCommand } from "@/composables/useSpaCommand";
 import { validateImage } from "@/utils/bookingRules";
+import LiveSpaInvoice from "./LiveSpaInvoice.vue";
 const props = defineProps({ booking: { type: Object, required: true } }), emit = defineEmits(["changed", "busy"]);
 const auth = useAuthStore(), intake = useSpaCommand(), approval = useSpaCommand();
 const { busy: intakeBusy, uncertain: intakeUncertain } = intake, { busy: reviewBusy, uncertain: reviewUncertain } = approval;
