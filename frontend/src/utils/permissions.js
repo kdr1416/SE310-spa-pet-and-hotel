@@ -12,15 +12,37 @@ const grants = {
   SPA: ["BOOKING_READ", "CARE_UPDATE", "SCHEDULE_SELF"],
   BASE_STAFF: ["BOOKING_READ", "SCHEDULE_SELF"],
 };
-/** Legacy mock menu groups. Target Backend roles are ADMIN/STAFF with resource guards. */
+// UI visibility capabilities can correspond to several backend permissions.
+const liveUiPermissions = new Map([
+  ["BOOKING_READ", ["BOOKING_APPROVE"]],
+  ["BOOKING_MANAGE", ["BOOKING_APPROVE"]],
+  ["CARE_UPDATE", ["CARE_UPDATE"]],
+  ["SCHEDULE_SELF", ["SCHEDULE_REGISTER"]],
+  ["FINANCE_MANAGE", ["INVOICE_CREATE", "INVOICE_COLLECT"]],
+  ["STAFF_MANAGE", ["SCHEDULE_APPROVE", "PERMISSION_MANAGE"]],
+  ["SYSTEM_MANAGE", ["SYSTEM_CONFIG"]],
+]);
+
 export function canAccess(user, capability) {
-  if (!user || user.isActive === false) return false;
+  if (!["ADMIN", "STAFF"].includes(user?.vaiTro)) return false;
+
+  // Seed actors retain their workGroup grants even when the API runs live.
+  if (user.maNhanVien != null) {
+    if ((user.dangHoatDong ?? user.isActive) === false) return false;
+    const permissions = Array.isArray(user.quyen) ? user.quyen : [];
+    const required = liveUiPermissions.get(capability);
+    if (!required) return permissions.includes(capability);
+    return (
+      user.vaiTro === "ADMIN" ||
+      required.some((permission) => permissions.includes(permission))
+    );
+  }
+
+  if (user.isActive === false) return false;
   const group =
     user.vaiTro === "ADMIN"
       ? "ADMIN"
-      : user.vaiTro === "STAFF"
-        ? user.workGroup || "BASE_STAFF"
-        : null;
+      : user.workGroup || "BASE_STAFF";
   return !!grants[group]?.includes(capability);
 }
 export function requireAccess(user, capability) {

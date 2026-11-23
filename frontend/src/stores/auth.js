@@ -3,13 +3,51 @@ import httpClient, { IS_MOCK_ENABLED } from "@/services/api/httpClient";
 import { mockCall, transaction } from "@/services/mock/mockRepository";
 import { matchesMockPassword } from "@/utils/mockCredentials";
 import { canAccess } from "@/utils/permissions";
+
+function normalizeLiveUser(rawUser) {
+  const maNhanVien = rawUser?.maNhanVien ?? rawUser?.id;
+  if (!Number.isInteger(maNhanVien) || maNhanVien <= 0) return null;
+
+  const tenNhanVien = rawUser.tenNhanVien ?? rawUser.name;
+  const vaiTro = rawUser.vaiTro ?? rawUser.role;
+  const permissions = rawUser.quyen ?? rawUser.permissions;
+  const quyen = Array.isArray(permissions) ? permissions : [];
+  const dangHoatDong = rawUser.dangHoatDong ?? rawUser.isActive ?? true;
+  return {
+    ...rawUser,
+    maNhanVien,
+    tenNhanVien,
+    vaiTro,
+    quyen,
+    dangHoatDong,
+    id: maNhanVien,
+    name: tenNhanVien,
+    role: vaiTro,
+    permissions: quyen,
+    isActive: dangHoatDong,
+  };
+}
+
+function hasValidSession(token, user) {
+  return (
+    typeof token === "string" &&
+    !!token.trim() &&
+    ["ADMIN", "STAFF"].includes(user?.vaiTro) &&
+    user.isActive !== false
+  );
+}
+
+function syncDemoSession(user) {
+  sessionStorage.setItem(
+    "petspa_mock_session",
+    JSON.stringify({ id: user.vaiTro === "ADMIN" ? 1 : 2 }),
+  );
+}
+
 export const useAuthStore = defineStore("auth", {
   state: () => ({ token: null, user: null, loading: false, error: null }),
   getters: {
-    isAuthenticated: (s) =>
-      !!s.token &&
-      ["ADMIN", "STAFF"].includes(s.user?.vaiTro) &&
-      s.user?.isActive !== false,
+    isAuthenticated: (s) => hasValidSession(s.token, s.user),
     isAdmin: (s) => s.user?.vaiTro === "ADMIN",
     isStaff: (s) => s.user?.vaiTro === "STAFF",
     currentUser: (s) => s.user,
@@ -69,10 +107,18 @@ export const useAuthStore = defineStore("auth", {
             tenDangNhap,
             matKhau,
           });
-          this.user = res.data.user;
-          this.token = res.data.token;
-          localStorage.setItem("petspa_auth_token", this.token);
-          localStorage.setItem("petspa_auth_user", JSON.stringify(this.user));
+          if (!res.success) throw new Error(res.message);
+
+          const token = res.data?.accessToken ?? res.data?.token;
+          const user = normalizeLiveUser(res.data?.nhanVien ?? res.data?.user);
+          if (!hasValidSession(token, user))
+            throw new Error("Phiên đăng nhập không hợp lệ.");
+
+          localStorage.setItem("petspa_auth_token", token);
+          localStorage.setItem("petspa_auth_user", JSON.stringify(user));
+          syncDemoSession(user);
+          this.user = user;
+          this.token = token;
         }
         return { success: true, user: this.user };
       } catch (e) {
@@ -94,10 +140,18 @@ export const useAuthStore = defineStore("auth", {
             : null;
           this.token = this.user ? "mock-session" : null;
         } else {
-          this.token = localStorage.getItem("petspa_auth_token");
-          this.user = JSON.parse(
-            localStorage.getItem("petspa_auth_user") || "null",
+          const token = localStorage.getItem("petspa_auth_token");
+          const user = normalizeLiveUser(
+            JSON.parse(localStorage.getItem("petspa_auth_user") || "null"),
           );
+          if (!hasValidSession(token, user)) {
+            this.logout();
+            return;
+          }
+
+          syncDemoSession(user);
+          this.user = user;
+          this.token = token;
         }
       } catch {
         this.logout();
