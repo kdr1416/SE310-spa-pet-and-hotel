@@ -61,8 +61,12 @@ const httpClient = axios.create({
 httpClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem("petspa_auth_token");
-    if (token && !config.headers.Authorization) {
-      config.headers.Authorization = `Bearer ${token}`;
+    if (token) {
+      config.headers.set("Authorization", `Bearer ${token}`, false);
+    }
+    if (typeof FormData !== "undefined" && config.data instanceof FormData) {
+      // Axios keeps the FormData body intact and lets the browser set its boundary.
+      config.headers.delete("Content-Type");
     }
     return config;
   },
@@ -72,6 +76,19 @@ httpClient.interceptors.request.use(
 // =========================================================================
 // 2. RESPONSE INTERCEPTOR: Unwrap .NET Envelope & Chuẩn hóa lỗi
 // =========================================================================
+const httpErrorMessages = {
+  400: "Yêu cầu không hợp lệ.",
+  401: "Phiên làm việc đã hết hạn hoặc bạn chưa đăng nhập.",
+  403: "Bạn không có quyền thực hiện thao tác này.",
+  404: "Không tìm thấy dữ liệu yêu cầu.",
+  409: "Khung giờ đã hết chỗ hoặc dữ liệu bị xung đột.",
+  413: "Tệp tải lên vượt quá kích thước cho phép.",
+  415: "Định dạng tệp tải lên không được hỗ trợ.",
+  422: "Yêu cầu không hợp lệ.",
+  429: "Có quá nhiều yêu cầu. Vui lòng thử lại sau.",
+  503: "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.",
+};
+
 httpClient.interceptors.response.use(
   (response) => {
     // Nếu backend trả về đúng Envelope .NET { success, data, message, errors }
@@ -83,76 +100,60 @@ httpClient.interceptors.response.use(
     return normalizeEnvelope(resData);
   },
   (error) => {
-    const errorResponse = {
-      success: false,
-      data: null,
-      message: "Có lỗi xảy ra, vui lòng thử lại!",
-      errors: [],
-    };
-
-    if (error.response) {
-      const status = error.response.status;
-      const data = error.response.data;
-
-      switch (status) {
-        case 401:
-          errorResponse.message =
-            "Phiên làm việc đã hết hạn hoặc bạn chưa đăng nhập.";
-          localStorage.removeItem("petspa_auth_token");
-          localStorage.removeItem("petspa_auth_user");
-          window.dispatchEvent(new CustomEvent("auth:unauthorized"));
-          break;
-
-        case 403:
-          errorResponse.message = "Bạn không có quyền thực hiện thao tác này.";
-          break;
-
-        case 400:
-        case 422:
-          // Xử lý ModelState validation errors từ ASP.NET Core
-          if (data && data.errors && typeof data.errors === "object") {
-            const extracted = [];
-            Object.values(data.errors).forEach((errList) => {
-              if (Array.isArray(errList)) {
-                extracted.push(...errList);
-              } else if (typeof errList === "string") {
-                extracted.push(errList);
-              }
-            });
-            errorResponse.errors = extracted;
-            errorResponse.message =
-              data.title || "Dữ liệu gửi lên không hợp lệ.";
-          } else {
-            errorResponse.message = data?.message || "Yêu cầu không hợp lệ.";
-            if (data?.errors) errorResponse.errors = data.errors;
-          }
-          break;
-
-        case 404:
-          errorResponse.message =
-            data?.message || "Không tìm thấy dữ liệu yêu cầu.";
-          break;
-
-        case 409: // Conflict: Overbooking / Hết slot (BR-03)
-          errorResponse.message =
-            data?.message || "Khung giờ đã hết chỗ hoặc dữ liệu bị xung đột.";
-          break;
-
-        case 500:
-        default:
-          errorResponse.message =
-            data?.message ||
-            "Lỗi hệ thống máy chủ .NET. Vui lòng liên hệ Admin.";
-          break;
+    if (!error.response) {
+      if (error.request) {
+        return Promise.reject(normalizeEnvelope(
+          null,
+          "Không thể kết nối đến máy chủ Backend .NET.",
+          false,
+          ["Network Error / Server Offline"],
+        ));
       }
-    } else if (error.request) {
-      errorResponse.message = "Không thể kết nối đến máy chủ Backend .NET.";
-      errorResponse.errors = ["Network Error / Server Offline"];
-    } else {
-      errorResponse.message = error.message;
+      return Promise.reject(normalizeEnvelope(
+        null,
+        error.message || "Có lỗi xảy ra, vui lòng thử lại!",
+        false,
+      ));
     }
 
-    return Promise.reject(errorResponse);
+    const { status, data } = error.response;
+    if (status === 401) {
+      localStorage.removeItem("petspa_auth_token");
+      localStorage.removeItem("petspa_auth_user");
+      sessionStorage.removeItem("petspa_mock_session");
+      window.dispatchEvent(new CustomEvent("auth:unauthorized"));
+    }
+
+    // Preserve the API error, including errorCode, traceId and field errors.
+    if (data?.success === false) {
+      return Promise.reject(data);
+    }
+
+    const errors = data?.errors;
+    if (
+      (status === 400 || status === 422) &&
+      errors &&
+      typeof errors === "object" &&
+      !Array.isArray(errors)
+    ) {
+      // ASP.NET ModelState can return a field-to-messages dictionary.
+      const messages = Object.values(errors).flatMap((value) =>
+        Array.isArray(value) || typeof value === "string" ? value : [],
+      );
+      return Promise.reject(normalizeEnvelope(
+        null,
+        data.title || "Dữ liệu gửi lên không hợp lệ.",
+        false,
+        messages,
+      ));
+    }
+
+    const message = data?.message ||
+      httpErrorMessages[status] ||
+      "Lỗi hệ thống máy chủ .NET. Vui lòng liên hệ Admin.";
+    return Promise.reject(normalizeEnvelope(
+      null, message, false, Array.isArray(errors) ? errors : [],
+    ));
   },
 );
 
