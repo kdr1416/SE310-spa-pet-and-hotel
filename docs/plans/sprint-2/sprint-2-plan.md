@@ -849,7 +849,7 @@ flowchart TD
 - **Branch:** `test/issue-27-e2e-sprint2-flows`
 - **Dependencies:** Toàn bộ Issues #14 $\rightarrow$ #26 (Phase 1) đã merge vào `develop`.
 - **Scope:** Kiểm thử E2E tự động qua HTTP (`PostgresWebApplicationFactory`) bao phủ toàn bộ 29 operations của Sprint 2 và các kịch bản dữ liệu bắt buộc `M2-L01` đến `M2-L09`. Bổ sung nghiệm thu browser đăng nhập cho **luồng Spa #26 Phase 2** trên môi trường thật được #25 bàn giao; ghi kết quả riêng với bộ test HTTP. Hotel/Combo UI vẫn là follow-up chưa thuộc checklist Spa này.
-- **Điều kiện chạy browser Spa:** #25 hoàn tất handoff môi trường ở Task 12; môi trường test phải chứa cả #26 Phase 1 từ **PR #38** và frontend/backend Phase 2 Spa. **PR #38 chưa merge theo xác nhận người dùng; Phase 2 hiện chỉ nằm trên nhánh local phụ thuộc code Phase 1, chưa được coi là có trên develop.** Luồng tích hợp vào develop: review/merge PR #38 trước, đồng bộ và review/merge Phase 2 sau, rồi đưa bản tích hợp lên môi trường test. Có thể chạy smoke sớm trên bản preview chứa đủ hai phase nếu được chọn rõ; không bắt buộc merge để test preview. Checklist Spa không phải chờ frontend Hotel/Combo.
+- **Điều kiện chạy browser Spa:** #25 hoàn tất handoff môi trường ở Task 12; môi trường test phải chứa cả #26 Phase 1 từ **PR #38** và frontend/backend Phase 2 Spa. **PR #38 đã squash merge vào develop tại `141312a`; nhánh Phase 2 đã rebase lên base này và được người dùng yêu cầu push/tạo PR riêng, chưa được coi là đã merge vào develop.** Review/merge Phase 2 rồi đưa bản tích hợp lên môi trường test, hoặc chọn rõ preview chứa đủ hai phase để smoke trước merge. Checklist Spa không phải chờ frontend Hotel/Combo.
 
 **Files:**
 - Create: `backend/tests/PetSpa.Tests/Flows/Sprint2HotelComboFlowTests.cs`

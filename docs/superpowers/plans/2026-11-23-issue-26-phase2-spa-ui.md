@@ -8,9 +8,9 @@
 
 **Tech Stack:** .NET10/EF/Npgsql/xUnit/WebApplicationFactory; Vue3/Pinia/Axios/Vitest/jsdom/TestUtils. Không dependency/schema/env flag mới.
 
-**Spec:** [Approved Phase 2](../specs/2026-11-23-issue-26-phase2-spa-ui-design.md). Phase1PR38 chưa merge; nhánh `feat/issue-26-phase2-spa-ui` là stacked branch từ Phase1 + develop `cb25111` (#18/#19), giữ PR38 nguyên vẹn.
+**Spec:** [Approved Phase 2](../specs/2026-11-23-issue-26-phase2-spa-ui-design.md). Nhánh `feat/issue-26-phase2-spa-ui` ban đầu được dựng từ Phase 1 + develop `cb25111` (#18/#19). PR #38 đã squash merge vào develop tại `141312a`; Phase 2 đã được rebase riêng lên base này trước khi push theo yêu cầu người dùng. Code backend/frontend giữ nguyên so với bản đã kiểm chứng trước rebase; PR chỉ chứa thay đổi Phase 2.
 
-**Integration gate:** PR #38 và Phase 2 là hai phần chưa được coi là đã có trên develop. Khi tích hợp vào develop, merge PR #38 trước rồi đồng bộ/review Phase 2; nếu PR #38 được squash merge, kiểm tra lại base/diff của Phase 2 để không đưa lại thay đổi Phase 1. Browser smoke #27 chỉ nghiệm thu bản test chứa đủ hai phase và môi trường #25 sẵn sàng. Có thể dùng preview của nhánh chứa đủ code để test trước merge; không tự merge/push/deploy khi chưa được yêu cầu.
+**Integration gate:** Phase 1 từ PR #38 đã có trên develop; Phase 2 cần PR review/CI và merge riêng. Người dùng đã yêu cầu push và tạo PR Phase 2, chưa yêu cầu merge hoặc deploy. Browser smoke #27 chỉ nghiệm thu bản test chứa đủ hai phase và môi trường #25 sẵn sàng. Có thể dùng preview của nhánh chứa đủ code để test trước merge.
 
 ## Global Constraints
 
