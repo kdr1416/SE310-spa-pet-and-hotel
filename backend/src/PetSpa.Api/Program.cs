@@ -97,6 +97,7 @@ builder.Services.AddHostedService<DepositExpiryBackgroundService>();
 builder.Services.AddScoped<BookingCreateService>();
 builder.Services.AddScoped<BookingProofService>();
 builder.Services.AddScoped<BookingManagementService>();
+builder.Services.AddScoped<CustomerLookupService>();
 builder.Services.AddScoped<TrackingService>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddScoped<IEmailSender, SmtpEmailSender>();
