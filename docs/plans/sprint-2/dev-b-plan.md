@@ -27,8 +27,10 @@
 
 ## Handoff Issue #26 (2026-11-23)
 
+**Cập nhật Phase 2 đã duyệt:** #18/#19 đã merge, tiếp tục dùng mutation hiện có. Tech Lead bổ sung E62/E38 trong #26 theo amendment, không mở lại #18. E14 lấy ca thao tác hiện tại từ E64 ngày VN, E15 thu input thật/đồng thuận; E38 giới hạn assignment phía server trước count/page/media. E17/E18 vẫn kiểm tra ca APPROVED và assignment lúc ghi. UI hiện chỉ thao tác Spa thường; Hotel/Combo nối sau. Xem [plan Phase 2](../../superpowers/plans/2026-11-23-issue-26-phase2-spa-ui.md).
+
 - **Phase 1 (#26):** Adapter `E15` đóng gói multipart theo contract và từ chối trước HTTP nếu thiếu input bắt buộc. `E19` yêu cầu xác nhận thực nhận và được gọi riêng sau khi hóa đơn `PAID`. Phase 1 có thể hoàn tất trước #18, với `getWorkspace.users` rỗng.
-- **Phase 2 (UI Form Integration, chưa gán số Issue):** Sau khi #18 merge, bàn giao contract `E14` (`ngay`, `maCa`, `CHECKIN_PERFORM`, danh sách ứng viên hợp lệ) để form check-in gửi `maNhanVien` đã chọn vào `E15`. Form cần `anhTiepNhan`, `ghiChuSucKhoe`, `quyetDinhGia`, `xacNhanKhach`. UI có thao tác bàn giao `E19` và xác nhận thực nhận riêng sau `PAID`.
+- **Phase 2 (Spa đã duyệt; Hotel/Combo nối sau):** #18 đã merge; dùng contract `E14` (`ngay`, `maCa`, `CHECKIN_PERFORM`, danh sách ứng viên hợp lệ) để form check-in gửi `maNhanVien` đã chọn vào `E15`. Form cần `anhTiepNhan`, `ghiChuSucKhoe`, `quyetDinhGia`, `xacNhanKhach`. UI có thao tác bàn giao `E19` và xác nhận thực nhận riêng sau `PAID`.
 
 Tham chiếu [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
 

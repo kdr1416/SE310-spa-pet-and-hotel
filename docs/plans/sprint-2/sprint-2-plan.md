@@ -1,5 +1,7 @@
 # KẾ HOẠCH SPRINT 2 — PETSPA & HOTEL (MILESTONE 4 - ĐỢT 2)
 
+**Amendment Phase2 Spa UI (duyệt 2026-11-23):** E64 mới và E38/E62 đưa lên Sprint2; phân bổ hiện hành 15/32/24=71 operations. Tổng29/68 ở phần baseline dưới đây giữ lịch sử; implementation Phase2 theo docs/superpowers/plans/2026-11-23-issue-26-phase2-spa-ui.md, executing-plans inline. Nhánh riêng stacked Phase1PR38 + develop#18/#19, không tự mergePR38. Schema và nghiệp vụ đóng băng giữ nguyên.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Triển khai hoàn chỉnh 29 operations của Sprint 2 (Hotel, Cọc 30% & Hoàn cọc, Combo `E61`, Dịch vụ phát sinh & Phụ phí, Thu hồi hóa đơn `E25`, Ngoại lệ thú cưng `E47–E49`, Ca làm việc `E27–E29/E54–E55`), gỡ 6 chốt chặn cứng từ Sprint 1, dựng Staging Neon PostgreSQL + Spike Supabase/SMTP thật và nối Frontend Vue 3 theo Hybrid Routing cho 15 operations Sprint 1.
@@ -135,7 +137,7 @@ flowchart TD
     I17 --> I27
     I20 --> I27
     I23 --> I27
-    I26 --> UI2["Phase 2: UI Form Integration<br/>Follow-up chưa gán số Issue"]
+    I26 --> UI2["Issue #26 Phase 2: Spa UI<br/>Hotel/Combo nối sau"]
     I18 -->|E14 sau khi merge| UI2
 ```
 
@@ -748,6 +750,10 @@ flowchart TD
 - **Dependencies:** Issue #14 đã merge.
 - **Scope:** Cấu hình hạ tầng Staging trên Neon PostgreSQL (migration qua cổng direct `5432`, runtime qua cổng pooler `6543`), và thêm bộ smoke test xác minh thật (opt-in qua biến môi trường) cho Neon + Supabase Storage + MailKit SMTP (đã được nâng cấp ở Task 1 / Issue #14).
 
+**Handoff browser smoke #26 → #27 (chốt 2026-11-23):** #25 chuẩn bị môi trường; #27 thực hiện nghiệm thu browser có đăng nhập. Trước khi bàn giao, xác nhận backend chạy và kết nối Neon test/staging đã migrate/seed, frontend live trỏ đúng backend với `VITE_USE_MOCK_API=false` và CORS hợp lệ, tài khoản test có quyền lễ tân/thu ngân và Staff chăm sóc cùng ca APPROVED, private bucket/Signed URL và hộp thư SMTP test đã qua live spike. Chỉ bàn giao thông tin cấu hình không nhạy cảm và cách cấp tài khoản test, không ghi credentials vào plan. PostgreSQL local thật đã được dùng trong test #26; phần chưa nghiệm thu là môi trường tích hợp live và browser đăng nhập.
+
+- [ ] Bàn giao môi trường sẵn sàng và kết quả live spike cho checklist browser Spa ở **#27 – Task 14, Step 3b**. Nếu môi trường chưa sẵn sàng, ghi rõ browser smoke là pending, không coi test double hoặc noop spike là đã nghiệm thu live.
+
 **Files:**
 - Modify: `backend/src/PetSpa.Api/appsettings.json`
 - Create: `backend/tests/PetSpa.Tests/Infrastructure/LiveIntegrationSpikeTests.cs`
@@ -832,7 +838,8 @@ flowchart TD
 #### Handoff Issue #26 (2026-11-23)
 
 - **Phase 1 (#26):** Nghiệm thu transport/adapter của đủ 15 operations, cách ly live/demo, validation và sự kiện theo [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
-- **Phase 2 (UI Form Integration, chưa gán số Issue):** Bổ sung nguồn slot động hoặc ánh xạ `maKhungGio` đã xác minh, phân trang UI, form check-in (`anhTiepNhan`, `ghiChuSucKhoe`, `quyetDinhGia`, `xacNhanKhach`), `invoiceId` và số tiền thực thu/trả thừa trên form thanh toán, thao tác bàn giao `E19` sau `PAID`, cùng danh sách ứng viên `E14` sau khi #18 merge.
+- **Phase 2 Spa (#26, duyệt 2026-11-23):** Theo [spec](../../superpowers/specs/2026-11-23-issue-26-phase2-spa-ui-design.md) và [plan inline](../../superpowers/plans/2026-11-23-issue-26-phase2-spa-ui.md). E64 cấp slot thật theo ngày; E62 đọc cấu hình lông; E38 lọc assignment trước phân trang/ký ảnh. UI Spa nối E03/E04 → E11 → E14/E62/E15 → E38/E17/E18 → E23/E24/E26 → E19. Hotel/Combo, cọc và phụ phí UI nối sau theo #15/#23; không coi #18 còn thiếu vì các endpoint đọc bổ sung này.
+- **Kiểm chứng Phase 2 (2026-11-23):** Backend 425/425 và frontend 272/272 PASS, production build PASS; registry 71 unique operations. Component/adapter integration dùng transport double; luồng Spa hai pet trong `SpaFlowTests` chạy HTTP/PostgreSQL thật với media/email double. Browser kiểm tra form public live ở 1280px/390px và trạng thái backend offline, không tràn ngang. Chưa nghiệm thu smoke Supabase/SMTP thật; không tự merge PR #38 hoặc push nhánh Phase 2.
 
 ---
 
@@ -841,7 +848,8 @@ flowchart TD
 - **Assignee:** `Tech Lead` *(Cùng Dev A, Dev B, Dev C phối hợp nghiệm thu)*
 - **Branch:** `test/issue-27-e2e-sprint2-flows`
 - **Dependencies:** Toàn bộ Issues #14 $\rightarrow$ #26 (Phase 1) đã merge vào `develop`.
-- **Scope:** Kiểm thử E2E tự động qua HTTP (`PostgresWebApplicationFactory`) bao phủ toàn bộ 29 operations của Sprint 2 và các kịch bản dữ liệu bắt buộc `M2-L01` đến `M2-L09`. Các test này xác minh luồng API backend. Nghiệm thu UI end-to-end thuộc follow-up Phase 2 với kiểm thử component và smoke live trên môi trường test.
+- **Scope:** Kiểm thử E2E tự động qua HTTP (`PostgresWebApplicationFactory`) bao phủ toàn bộ 29 operations của Sprint 2 và các kịch bản dữ liệu bắt buộc `M2-L01` đến `M2-L09`. Bổ sung nghiệm thu browser đăng nhập cho **luồng Spa #26 Phase 2** trên môi trường thật được #25 bàn giao; ghi kết quả riêng với bộ test HTTP. Hotel/Combo UI vẫn là follow-up chưa thuộc checklist Spa này.
+- **Điều kiện chạy browser Spa:** #25 hoàn tất handoff môi trường ở Task 12; môi trường test phải chứa cả #26 Phase 1 từ **PR #38** và frontend/backend Phase 2 Spa. **PR #38 đã squash merge vào develop tại `141312a`; nhánh Phase 2 đã rebase lên base này và được người dùng yêu cầu push/tạo PR riêng, chưa được coi là đã merge vào develop.** Review/merge Phase 2 rồi đưa bản tích hợp lên môi trường test, hoặc chọn rõ preview chứa đủ hai phase để smoke trước merge. Checklist Spa không phải chờ frontend Hotel/Combo.
 
 **Files:**
 - Create: `backend/tests/PetSpa.Tests/Flows/Sprint2HotelComboFlowTests.cs`
@@ -874,6 +882,16 @@ flowchart TD
   - Expected: `0 errors, 0 warnings`, 100% xUnit và Vitest tests PASS.
 - [ ] **Step 4: Commit**
   - `git commit -m "test(e2e): add Sprint 2 end-to-end integration tests for hotel, deposit, combo, and single-pet cancellation"`
+
+**Step 3b — Browser smoke có đăng nhập: nghiệm thu live còn lại từ #26 Phase 2 (Tech Lead + nhóm)**
+
+- [ ] Xác nhận frontend dùng `VITE_USE_MOCK_API=false`, gọi backend test/staging thật và đọc/ghi Neon test/staging; không dùng transport/media/email doubles cho lượt nghiệm thu này.
+- [ ] Khách tạo lịch Spa hai pet bằng slot thật, nhận tracking code và email trong hộp thư test; lỗi gửi email không làm mất booking hoặc tracking code.
+- [ ] Đăng nhập tài khoản lễ tân: tìm/duyệt đúng booking, lấy ứng viên ca hiện tại, nhập đủ dữ liệu và đồng thuận check-in từng pet; ảnh tiếp nhận được upload lên private bucket thật.
+- [ ] Đăng nhập Staff được phân công: E38 chỉ hiện công việc hợp lệ; chạy START/PAUSE/RESUME/READY và nhật ký, kiểm tra ảnh thật qua Signed URL. Tài khoản/assignment không hợp lệ không đọc hoặc sửa được công việc của người khác.
+- [ ] Đăng nhập tài khoản có quyền thu ngân: lập hóa đơn, kiểm tra dòng tiền/QR backend, nhập khoản thu và tiền trả lại bằng dữ liệu test; PAID không tự bàn giao. Xác nhận nhận từng pet riêng, chỉ pet cuối mới khép đơn; khách tra cứu thấy trạng thái tương ứng.
+- [ ] Kiểm tra đổi tài khoản/đăng xuất giữa hai tab, thông báo và phân trang, lỗi 403/409, retry cùng requestId khi chưa rõ kết quả; dữ liệu và form của phiên trước phải được xóa. Kiểm tra desktop/mobile và thao tác bàn phím trên các form đăng nhập/check-in/thanh toán.
+- [ ] Ghi ngày chạy, phiên bản frontend/backend, môi trường, vai trò test, kết quả từng bước và bằng chứng đã che thông tin nhạy cảm vào nghiệm thu #27. Lỗi UI/adapter chuyển về #26; lỗi môi trường/Supabase/SMTP về #25; lỗi nghiệp vụ về issue backend tương ứng. Để checklist chưa tick nếu chưa chạy hoặc còn blocker; không dùng kết quả xUnit/Vitest thay cho browser smoke.
 
 ---
 
