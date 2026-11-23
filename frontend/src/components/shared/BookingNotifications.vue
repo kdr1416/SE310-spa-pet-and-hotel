@@ -21,7 +21,7 @@ import { useAuthStore } from '@/stores/auth';
 import { bookingService } from '@/services/api/bookingService';
 import { weekdayLabel } from '@/utils/dates';
 const auth = useAuthStore(), router = useRouter(), bookings = ref([]), open = ref(false), error = ref('');
-let timer, loading = false;
+let timer, refreshTimeout, loading = false;
 async function refresh() {
   if (loading || document.hidden) return;
   loading = true;
@@ -38,15 +38,22 @@ async function refresh() {
   } catch { error.value = 'Không tải được thông báo. Bấm để thử lại.'; }
   finally { loading = false; }
 }
-function storageChanged(e) { if (e.key === 'petspa_workspace_update') refresh(); }
+function debouncedRefresh() {
+  clearTimeout(refreshTimeout);
+  refreshTimeout = setTimeout(refresh, 300);
+}
+function storageChanged(e) { if (e.key === 'petspa_workspace_update') debouncedRefresh(); }
 onMounted(() => {
   refresh(); timer = setInterval(refresh, 30000);
   document.addEventListener('visibilitychange', refresh);
-  window.addEventListener('petspa-workspace-updated', refresh);
+  window.addEventListener('petspa-workspace-updated', debouncedRefresh);
   window.addEventListener('storage', storageChanged);
 });
 onBeforeUnmount(() => {
-  clearInterval(timer); document.removeEventListener('visibilitychange', refresh);
-  window.removeEventListener('petspa-workspace-updated', refresh); window.removeEventListener('storage', storageChanged);
+  clearInterval(timer);
+  clearTimeout(refreshTimeout);
+  document.removeEventListener('visibilitychange', refresh);
+  window.removeEventListener('petspa-workspace-updated', debouncedRefresh);
+  window.removeEventListener('storage', storageChanged);
 });
 </script>

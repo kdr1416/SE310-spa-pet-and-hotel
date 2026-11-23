@@ -25,6 +25,15 @@
 
 ---
 
+## Handoff Issue #26 (2026-11-23)
+
+- **Phase 1 (#26):** `E03` cung cấp dữ liệu ca/availability để hiển thị. `E04` cần `maKhungGio` thật hoặc ánh xạ đã xác minh và truyền cùng ID vào từng `ServiceSelection.maKhungGio`. `shiftId`/`maCa` định danh ca hiển thị. Khi thiếu ánh xạ, adapter trả `MISSING_SLOT_MAPPING` trước HTTP.
+- **Phase 2 (UI Form Integration, chưa gán số Issue):** Handoff contract `E03/E04` từ #15 và `BookingResponse`/`PageBooking` cho luồng UI. Form đặt lịch cần nguồn slot động hoặc ánh xạ đã xác minh. Phân trang UI dùng `trang`, `kichThuocTrang`, `tongSo` từ `E10a`. Phase 1 mặc định lấy trang 1 với `kichThuocTrang=100`.
+
+Tham chiếu [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
+
+---
+
 ## 0. Điều Kiện Bắt Đầu & Quy Tắc Bắt Buộc
 
 1. **Cửa khóa Ngày 1 (Chờ Issue #14 merge):** Chỉ tạo nhánh tính năng sau khi Tech Lead đã merge **Issue #14 (Foundation)** vào `origin/develop`. Luôn đồng bộ sạch trước khi cắt nhánh:

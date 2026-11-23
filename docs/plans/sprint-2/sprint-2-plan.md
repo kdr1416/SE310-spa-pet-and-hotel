@@ -73,14 +73,14 @@
 | **G3** | `BookingManagementService.cs` (`E11, E12`) | `E12` chặn hủy đơn có `TienCocDonDatLich != null` hoặc `LoaiPhongId != null`. | **Issue #17** (`Dev A`) | `E11` khóa `tien_coc` kiểm tra `DA_DAP_UNG` trước khi duyệt; `E12` (và `E09`) cho phép hủy đơn Hotel/Cọc trước check-in, nhả slot Spa + suất phòng Hotel, cập nhật `TienCoc` (`HUY` nếu còn `CHO_THU`; phạt giữ cọc nếu hủy muộn `< 2h` / `NO_SHOW`; hoặc tự tạo `HoanCoc` `CHO_HOAN` với `TaoBoiId` hợp lệ khi khách hủy hợp lệ qua `E09`). |
 | **G4** | `CheckinService.cs` (`E15`) & `HandoverService.cs` (`E19`) | `E15` chỉ đọc giá `DichVuId`, bỏ qua `ComboId` và giá phòng Hotel; `E19` chưa kiểm tra `TraLaiAt != null` cho pet hủy riêng `M2-04`/`M2-05`. | **Issue #18 & #20** (`Dev B`) | `E15` chốt `SizeChot`/`GiaChot` cho cả `ComboId` từ `BangGiaSizeSnapshot` và chốt `GiaPhongChot`/`SoDemChot` (theo múi giờ `Asia/Ho_Chi_Minh`) cho pet Hotel; `E19` và `E49` gọi `BillingSettlementHelper.TryTransitionBookingTerminalState` khép vòng đời `M2-04`/`M2-05`. |
 | **G5** | `InvoiceService.cs` (`E23`) | Chặn `p.LoaiPhongId.HasValue`, `service.ComboId.HasValue`, `booking.TienCocDonDatLich != null`, `total <= 0`. | **Issue #23** (`Dev C`) | Lập dòng `SPA` (dịch vụ đơn, combo hoàn tất, hoặc thành phần lẻ của pet hủy `E47`), dòng `HOTEL` (`so_dem * gia_phong_chot` với `so_luong > 0`), dòng `PHU_PHI`; khấu trừ `CocKhauTru`, tự chuyển `PAID` nếu `conPhaiTra == 0` do cọc bao phủ, và gán `ThayTheHoaDonId` sau `E25`. |
-| **G6** | `frontend/src/services/api/operationClient.js` & `auth.js` | `operationClient.js` ném lỗi cứng khi `VITE_USE_MOCK_API=false`; `auth.js` đọc sai field `res.data.user`/`token` thay vì `nhanVien`/`accessToken`. | **Issue #26** (`Tech Lead`) | Sửa `auth.js` khớp DTO `Session` (`accessToken`, `nhanVien`); Hybrid Routing trong `operationClient.js` dùng cờ `IS_MOCK_ENABLED` có sẵn để route cả 9 action thực tế của Vue UI lẫn 15 action chuẩn Sprint 1 sang `httpClient`, fallback về `mockCall` cho các màn hình Sprint 2/3. |
+| **G6** | `frontend/src/services/api/operationClient.js` & `auth.js` | `operationClient.js` ném lỗi cứng khi `VITE_USE_MOCK_API=false`; `auth.js` đọc sai field `res.data.user`/`token` thay vì `nhanVien`/`accessToken`. | **Issue #26** (`Tech Lead`) | Phase 1 chuẩn hóa `Session` và route 15 operations Sprint 1 cùng các alias UI qua `httpClient`. Action ngoài allowlist dùng phiên demo tách biệt theo điều kiện ở Task 13. |
 
 ### 1.2 Ma trận phân công 4 làn công việc song song (14 Issues: #14 $\rightarrow$ #27)
 
 | Làn công việc | Phụ trách | Danh sách Issues | Operations & Hạng mục sở hữu |
 |---|---|---|---|
 | **Làn 0 — Nền tảng & Mở khóa** | **Tech Lead** *(Dev A, B, C review)* | **Issue #14** | Shared DTOs Sprint 2, `BookingProjection` full mapping (components, hotel fields, deposit projection), `HotelCapacityCalculator` + `SpaCapacityCalculator` expired-hold read compensation, `DepositExpiryService`, class tính toán gọn nhẹ `BillingSettlementHelper : IBillingSettlementHelper`, nâng cấp `SmtpEmailSender` lên `MailKit`, mở rộng `DbInitializer` (G1). |
-| **Làn 1 — Hạ tầng, Ca làm việc & Frontend** | **Tech Lead** | **Issue #24, #25, #26, #27** | **5 Ops Ca kíp:** `E27, E28, E29, E54, E55` (#24).<br/>**Staging & Spike:** Neon PostgreSQL (`5432`/`6543`) + Spike Supabase Storage & MailKit SMTP thật (#25).<br/>**Frontend Vue 3:** Hybrid Routing `operationClient.js` + `auth.js` (G6) nối 15 API Sprint 1 (#26).<br/>**E2E Sprint 2:** Kiểm thử tích hợp toàn luồng Sprint 2 (#27). |
+| **Làn 1 — Hạ tầng, Ca làm việc & Frontend** | **Tech Lead** | **Issue #24, #25, #26, #27** | **5 Ops Ca kíp:** `E27, E28, E29, E54, E55` (#24).<br/>**Staging & Spike:** Neon PostgreSQL (`5432`/`6543`) + Spike Supabase Storage & MailKit SMTP thật (#25).<br/>**Frontend Vue 3:** Hybrid Routing cho 15 operations Sprint 1 (#26 Phase 1).<br/>**E2E Sprint 2:** Kiểm thử luồng backend qua HTTP (#27). |
 | **Làn 2 — Booking, Hotel, Khách hàng & Tracking** | **Dev A** | **Issue #15, #16, #17** | **7 Ops + Gỡ G2, G3:** Mở rộng `E03, E04` cho Hotel/Combo/Cọc + `E05` Booking tại quầy (#15); `E06, E07` Tra cứu khách & sửa pet (#16); `E10b, E13, E09, E50` + mở rộng `E11/E12` hủy/dời lịch/tracking resend (#17). |
 | **Làn 3 — Phân công, Combo `E61` & Ngoại lệ Pet** | **Dev B** | **Issue #18, #19, #20** | **7 Ops (`E14, E16, E61, E21, E47, E48, E49`) + Gỡ G4:** `E14, E16` + mở rộng `E15` Check-in Combo/Hotel (#18); `E61` Hoàn tất thành phần combo & `E21` Hoàn tất/hủy dịch vụ phát sinh + guard `E17 READY` (#19); `E47` Hủy riêng pet, `E48` Nhận sớm, `E49` Trả pet hủy (#20). |
 | **Làn 4 — Cọc 30%, Hoàn cọc, Phát sinh & Hóa đơn** | **Dev C** | **Issue #21, #22, #23** | **10 Ops (`E42–E46, E20, E22a–c, E25`) + Gỡ G5:** `E42, E43, E44, E45, E46` Thu cọc & Hoàn cọc (#21); `E20` Thêm dịch vụ phát sinh & `E22a, E22b, E22c` Phụ phí (#22); Mở rộng `E23` Hóa đơn Hotel/Combo/Cọc & `E25` Thu hồi hóa đơn (#23). |
@@ -99,7 +99,7 @@ flowchart TD
     I14 --> L_DEVC["Làn 4 - Dev C (Billing/Deposit/Fees)"]
 
     subgraph Lane1["Làn 1: Tech Lead"]
-        I26["Issue #26 (5h): Vue 3 Hybrid Routing (G6)<br/>& Nối luồng lõi Sprint 1 (E01 + Spa)"]
+        I26["Issue #26 Phase 1 (1–2 ngày): Hybrid Routing (G6)<br/>Core Transport cho 15 operations Sprint 1"]
         I24["Issue #24 (5h): Lịch & Ca kíp<br/>E27, E28, E29, E54, E55"]
         I25["Issue #25 (4h): Neon Staging (5432/6543)<br/>& Live Spike Supabase + MailKit SMTP"]
         I26 --> I24 --> I25
@@ -135,6 +135,8 @@ flowchart TD
     I17 --> I27
     I20 --> I27
     I23 --> I27
+    I26 --> UI2["Phase 2: UI Form Integration<br/>Follow-up chưa gán số Issue"]
+    I18 -->|E14 sau khi merge| UI2
 ```
 
 ---
@@ -775,17 +777,19 @@ flowchart TD
 
 ---
 
-### Task 13 (Issue #26): [Frontend] Hybrid Routing `operationClient.js` + `auth.js` (G6) & Nối Luồng Lõi Sprint 1 Vue 3
+### Task 13 (Issue #26 Phase 1): [Frontend] Core Transport & Stateless Bridge (G6)
 
 - **Assignee:** `Tech Lead`
 - **Branch:** `feat/issue-26-frontend-sprint1-hybrid-wiring`
-- **Dependencies:** Issue #14 đã merge. *(Có thể thực hiện ngay ở Ngày 1–2 sau Issue #14 vì chỉ nối với 15 API Sprint 1 đã có sẵn trên `develop`)*.
-- **Scope:** Gỡ chốt chặn **G6** trong `frontend/src/stores/auth.js` và `frontend/src/services/api/operationClient.js` bằng cơ chế Hybrid Routing theo allowlist cho 15 operations của Sprint 1 (`E01, E02, E03, E04, E08, E10a, E11, E12, E15, E17, E18, E19, E23, E24, E26`), đồng thời tương thích 100% với 9 tên action hiện có của các Vue component và giữ fallback `mockCall` cho các màn hình Sprint 2/3 chưa nối.
+- **Dependencies:** Issue #14 đã merge. Phase 1 có thể hoàn tất trước #18 vì dùng 15 API Sprint 1 đã có trên `develop`. Phase 2 nối `E14` sau khi #18 merge.
+- **Scope:** Gỡ **G6** bằng Hybrid Routing theo allowlist cho 15 operations Sprint 1 (`E01, E02, E03, E04, E08, E10a, E11, E12, E15, E17, E18, E19, E23, E24, E26`) và 9 alias của Vue UI. Adapter kiểm tra dữ liệu bắt buộc trước khi gửi HTTP.
 
 **Files:**
 - Modify: `frontend/src/stores/auth.js`
 - Modify: `frontend/src/services/api/httpClient.js`
 - Modify: `frontend/src/services/api/operationClient.js`
+- Modify: `frontend/src/utils/permissions.js`
+- Modify: script của `frontend/src/components/shared/BookingNotifications.vue` cho debounce (ngoại lệ Task 7, giữ template)
 - Create: `frontend/src/services/api/sprint1Adapter.js`
 - Create: `frontend/tests/unit/sprint1HybridRouting.spec.js`
 
@@ -794,33 +798,41 @@ flowchart TD
 - Produces:
   - **Sửa `frontend/src/stores/auth.js` khớp DTO `Session` của `E01` (`POST /api/auth/login`):**
     - Khi `!IS_MOCK_ENABLED`, đọc đúng `const token = res.data.accessToken ?? res.data.token` và chuẩn hóa `const rawUser = res.data.nhanVien ?? res.data.user` thành object `user` có đủ cả tên trường contract (`maNhanVien, tenNhanVien, tenDangNhap, vaiTro, quyen, dangHoatDong`) lẫn alias UI đang dùng (`id: rawUser.maNhanVien ?? rawUser.id`, `name: rawUser.tenNhanVien ?? rawUser.name`, `role: rawUser.vaiTro ?? rawUser.role`, `permissions: rawUser.quyen ?? rawUser.permissions`, `isActive: rawUser.dangHoatDong ?? rawUser.isActive ?? true`).
-  - **`sprint1Adapter.js` (Ánh xạ cả 15 endpoint Sprint 1 chuẩn lẫn 9 tên action thực tế của Vue UI):**
-    1. `catalog` / `getCatalog` (`E02 GET /api/catalog`) & `checkAvailability` (`E03 POST /api/availability`): gọi `/api/catalog` (và `/api/availability` khi có thông tin ca/thú cưng) trả dữ liệu vừa có trường chuẩn contract (`dichVu, combo, loaiPhong, khoangSize`) vừa có alias cho view hiện tại.
-    2. `createBooking` (`E04 POST /api/bookings`): tự động đóng gói `FormData` với field `"payload"` (JSON `BookingCreate`, tự chuyển đổi cả khi caller truyền format UI `{ customer, shiftId, checkout, pets }` hoặc format contract `{ requestId, lienHe, maKhungGio, ngayTra, thuCung }`) và đính kèm file tiêm chủng nếu có.
-    3. `lookupBooking` / `lookupTracking` (`E08 POST /api/tracking/lookup`): nhận `{ trackingCode, soDienThoai }` hoặc `{ trackingCode, phone }` $\rightarrow$ gửi `{ trackingCode, soDienThoai: payload.soDienThoai ?? payload.phone }`.
-    4. `getWorkspace` / `listBookings` (`E10a GET /api/internal/bookings`): gọi `GET /api/internal/bookings` trả danh sách đơn.
+  - **`sprint1Adapter.js` (Ánh xạ 14 operations còn lại và alias UI. `E01` do auth store gọi):**
+    1. `catalog` / `getCatalog` (`E02 GET /api/catalog`) đọc catalog. `checkAvailability` (`E03 POST /api/availability`) gửi truy vấn công suất theo contract. Projection cho alias UI giữ các trường contract đi kèm.
+    2. `createBooking` (`E04 POST /api/bookings`) gửi `FormData` gồm JSON `BookingCreate` trong field `"payload"` và file tiêm chủng nếu có. Dùng `maKhungGio` thật hoặc ánh xạ đã xác minh, chép ID xuống từng `ServiceSelection.maKhungGio`. Thiếu ánh xạ trả `MISSING_SLOT_MAPPING` trước HTTP. `shiftId`/`maCa` chỉ định ca hiển thị.
+    3. `lookupBooking` / `lookupTracking` (`E08 POST /api/tracking/lookup`) gửi `trackingCode` và `soDienThoai ?? phone` đã chuẩn hóa thành 10 chữ số ASCII.
+    4. Với `E10a GET /api/internal/bookings`, `getWorkspace` mặc định yêu cầu 100 đơn mỗi trang. `listBookings` chuyển tiếp tham số của caller. Khi bỏ qua phân trang, backend mặc định trả trang 1 với 20 đơn. Cả hai giữ `trang`, `kichThuocTrang`, `tongSo`. `getWorkspace.users` rỗng ở Phase 1.
     5. `reviewBooking` / `confirmBooking` / `cancelBooking` (`E11` & `E12`):
        - `confirmBooking` hoặc `reviewBooking` với `decision === "CONFIRMED"` $\rightarrow$ `POST /api/internal/bookings/{id}/confirm` (`{ requestId }`).
        - `cancelBooking` hoặc `reviewBooking` với `decision === "CANCELLED"` $\rightarrow$ `POST /api/internal/bookings/{id}/cancel` (`{ requestId, loaiHuy: payload.loaiHuy ?? "STAFF_REJECTED", lyDo: payload.lyDo ?? payload.reason }`).
-    6. `checkIn` / `checkInPet` (`E15 POST /api/internal/booking-pets/{id}/check-in`): đóng gói `FormData` gồm `"payload"` (`Checkin` JSON) và file `"anhTiepNhan"`.
+    6. `checkIn` / `checkInPet` (`E15 POST /api/internal/booking-pets/{id}/check-in`) kiểm tra đủ ảnh, ghi chú sức khỏe, quyết định giá, xác nhận khách và các trường bắt buộc rồi đóng gói `FormData` gồm `"payload"` (`Checkin` JSON) và file `"anhTiepNhan"`.
     7. `careUpdate` / `performCareAction` (`E17 POST /api/internal/booking-pets/{id}/care-actions`) & `addCareLog` (`E18 POST /api/internal/booking-pets/{id}/care-logs`): đóng gói `FormData` đúng contract.
-    8. `createInvoice` (`E23 POST /api/internal/bookings/{id}/invoices`), `getInvoice` (`E24 GET /api/internal/invoices/{id}`), `checkoutInvoice` (`E26 POST /api/internal/invoices/{id}/checkout`), `handoverPet` (`E19 POST /api/internal/booking-pets/{id}/handover`), và `confirmPayment` (nối `E26` checkout).
+    8. `createInvoice` (`E23 POST /api/internal/bookings/{id}/invoices`), `getInvoice` (`E24 GET /api/internal/invoices/{id}`), `checkoutInvoice` / `confirmPayment` (`E26 POST /api/internal/invoices/{id}/checkout`) và `handoverPet` (`E19 POST /api/internal/booking-pets/{id}/handover`) là các command riêng. `E26` từ chối thiếu `invoiceId` thật, phương thức hoặc số tiền thực thu/trả thừa bắt buộc. `E19` yêu cầu xác nhận thực nhận.
+  - Giữ `requestId` caller cung cấp cho idempotency. Khi thiếu, tạo bằng `crypto.randomUUID()`.
   - **`callOperation(action, payload, isPublic)` trong `operationClient.js`:**
-    - Khi `!IS_MOCK_ENABLED`: nếu `action` được hỗ trợ trong `sprint1Adapter`, gọi qua `httpClient` tới Backend .NET 10 thật và phát sự kiện `petspa-workspace-updated`; nếu `action` thuộc nhóm Sprint 2/3 chưa nối trên UI thì fallback an toàn về `mockCall(action, payload, actor)` để không màn hình nào bị crash.
+    - Khi `IS_MOCK_ENABLED`, giữ luồng mock hiện tại. Khi tắt mock, action trong allowlist gọi `httpClient` và trả lỗi HTTP/network về UI. Action demo được hỗ trợ dùng actor riêng (Admin → 1, Staff → 2) trong `sessionStorage`. Chặn `updateBooking`, `addSurcharge`, `customerRequest`, `reviewRequest`, `resendTracking`, `updateAccount` với `HYBRID_ENTITY_UNSUPPORTED` khi chạy live vì các action này có thể nhận tham chiếu đến dữ liệu live. Mock repository trả lỗi unsupported cho action chưa hỗ trợ.
+    - Phát `petspa-workspace-updated` đúng một lần sau mutation nội bộ thành công. Script của `BookingNotifications.vue` debounce workspace/storage refresh 300 ms.
+  - `permissions.js` dùng trực tiếp `user.quyen` trong live mode. `httpClient.js` unwrap Axios response một lần, giữ API envelope và `errorCode`, `traceId`, `errors`. Với `FormData`, để Axios/trình duyệt tạo multipart boundary.
 
 - [ ] **Step 1: Write the failing Vitest unit tests in `frontend/tests/unit/sprint1HybridRouting.spec.js`**
   - Kiểm tra `auth.js` khi login với response chuẩn Backend `E01` (`{ accessToken, expiresIn, nhanVien: { maNhanVien, tenNhanVien, tenDangNhap, vaiTro, quyen, dangHoatDong } }`) lưu đúng `token` vào `localStorage` và `user.isActive === true`.
-  - Kiểm tra khi `VITE_USE_MOCK_API=false`, gọi cả các action thực tế của Vue UI (`catalog`, `getWorkspace`, `createBooking`, `lookupBooking`, `reviewBooking`, `checkIn`, `careUpdate`, `createInvoice`, `confirmPayment`) lẫn các action chuẩn Sprint 1 đều đi qua `httpClient` với đúng method, URL, payload/FormData và `requestId`.
-  - Kiểm tra khi gọi một action thuộc Sprint 3 chưa nối (ví dụ `saveExtensionSettings` hoặc `submitReview`), `operationClient` fallback an toàn về `mockCall` mà không ném lỗi.
+  - Khi `VITE_USE_MOCK_API=false`, kiểm tra request hợp lệ cho 9 alias UI (`catalog`, `getWorkspace`, `createBooking`, `lookupBooking`, `reviewBooking`, `checkIn`, `careUpdate`, `createInvoice`, `confirmPayment`) và các action chuẩn Sprint 1 đi qua `httpClient` với đúng method, URL, payload/FormData và `requestId` khi contract yêu cầu. Kiểm tra validation từ chối trước HTTP khi thiếu dữ liệu bắt buộc.
+  - Kiểm tra cách ly demo actor, từ chối thao tác demo lên thực thể live, lỗi live không gọi mock, và debounce chỉ refresh một lần.
 - [ ] **Step 2: Run Vitest to verify tests fail**
   - Run: `npm --prefix frontend test -- --run tests/unit/sprint1HybridRouting.spec.js`
   - Expected: FAIL.
-- [ ] **Step 3: Implement `sprint1Adapter.js` and update `auth.js`, `operationClient.js` & `httpClient.js`**
+- [ ] **Step 3: Implement adapter, session, dispatch, transport, permissions và debounce theo implementation plan Phase 1**
 - [ ] **Step 4: Run full frontend test suite to verify everything passes**
   - Run: `npm --prefix frontend test -- --run`
   - Expected: PASS 100%.
 - [ ] **Step 5: Commit**
   - `git commit -m "feat(frontend): implement allowlist hybrid routing in operationClient and fix E01 session mapping"`
+
+#### Handoff Issue #26 (2026-11-23)
+
+- **Phase 1 (#26):** Nghiệm thu transport/adapter của đủ 15 operations, cách ly live/demo, validation và sự kiện theo [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
+- **Phase 2 (UI Form Integration, chưa gán số Issue):** Bổ sung nguồn slot động hoặc ánh xạ `maKhungGio` đã xác minh, phân trang UI, form check-in (`anhTiepNhan`, `ghiChuSucKhoe`, `quyetDinhGia`, `xacNhanKhach`), `invoiceId` và số tiền thực thu/trả thừa trên form thanh toán, thao tác bàn giao `E19` sau `PAID`, cùng danh sách ứng viên `E14` sau khi #18 merge.
 
 ---
 
@@ -828,8 +840,8 @@ flowchart TD
 
 - **Assignee:** `Tech Lead` *(Cùng Dev A, Dev B, Dev C phối hợp nghiệm thu)*
 - **Branch:** `test/issue-27-e2e-sprint2-flows`
-- **Dependencies:** Toàn bộ Issues #14 $\rightarrow$ #26 đã merge vào `develop`.
-- **Scope:** Kiểm thử E2E tự động qua HTTP (`PostgresWebApplicationFactory`) bao phủ toàn bộ 29 operations của Sprint 2 và các kịch bản dữ liệu bắt buộc `M2-L01` đến `M2-L09`.
+- **Dependencies:** Toàn bộ Issues #14 $\rightarrow$ #26 (Phase 1) đã merge vào `develop`.
+- **Scope:** Kiểm thử E2E tự động qua HTTP (`PostgresWebApplicationFactory`) bao phủ toàn bộ 29 operations của Sprint 2 và các kịch bản dữ liệu bắt buộc `M2-L01` đến `M2-L09`. Các test này xác minh luồng API backend. Nghiệm thu UI end-to-end thuộc follow-up Phase 2 với kiểm thử component và smoke live trên môi trường test.
 
 **Files:**
 - Create: `backend/tests/PetSpa.Tests/Flows/Sprint2HotelComboFlowTests.cs`
