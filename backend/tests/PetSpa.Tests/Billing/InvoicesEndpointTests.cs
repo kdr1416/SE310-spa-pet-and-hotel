@@ -197,8 +197,11 @@ public class InvoicesEndpointTests
         using var get = await client.GetAsync("/api/internal/invoices/1");
         using var checkout = await client.PostAsJsonAsync("/api/internal/invoices/1/checkout",
             new { requestId = Guid.NewGuid(), phuongThuc = "CASH", soTienThucNhan = 200_000, soTienDaTraLai = 0 });
+        using var withdraw = await client.PostAsJsonAsync("/api/internal/invoices/1/withdraw",
+            new { requestId = Guid.NewGuid(), lyDo = "Thu hồi" });
         get.StatusCode.Should().Be(HttpStatusCode.Forbidden);
         checkout.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        withdraw.StatusCode.Should().Be(HttpStatusCode.Forbidden);
     }
 
     [Fact]
@@ -275,8 +278,10 @@ public class InvoicesEndpointTests
         using var get = await client.GetAsync($"/api/internal/invoices/{invoiceId}");
         using var checkout = await client.PostAsJsonAsync($"/api/internal/invoices/{invoiceId}/checkout",
             new { requestId = Guid.NewGuid(), phuongThuc = "CASH", soTienThucNhan = 200_000, soTienDaTraLai = 0 });
+        using var withdraw = await client.PostAsJsonAsync($"/api/internal/invoices/{invoiceId}/withdraw",
+            new { requestId = Guid.NewGuid(), lyDo = "Thu hồi" });
 
-        foreach (var response in new[] { create, get, checkout })
+        foreach (var response in new[] { create, get, checkout, withdraw })
         {
             response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
             var body = await response.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>();
@@ -330,10 +335,295 @@ public class InvoicesEndpointTests
         var invoice = (await created.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>())!.Data!;
 
         using var response = await client.PostAsJsonAsync($"/api/internal/invoices/{invoice.MaHoaDon}/checkout",
-            new { requestId = Guid.NewGuid(), phuongThuc = "CASH", soTienThucNhan = fractional ? 200_000.5m : 250_000m,
-                soTienDaTraLai = fractional ? 0 : 50_000m });
+            new
+            {
+                requestId = Guid.NewGuid(),
+                phuongThuc = "CASH",
+                soTienThucNhan = fractional ? 200_000.5m : 250_000m,
+                soTienDaTraLai = fractional ? 0 : 50_000m
+            });
         response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
         (await response.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>())!.ErrorCode.Should().Be("VALIDATION_FAILED");
+    }
+
+    // =========================================================================
+    // SPRINT 2 TESTS (Issue #23): Hotel M2-L01, Combo + Cọc + Phụ phí, Zero-Due, E25 Withdraw M2-L04
+    // =========================================================================
+
+    [Fact]
+    public async Task CreateInvoice_HotelOnlyBooking_CreatesHotelLineItemWithNightsQuantity()
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db =>
+        {
+            SeedBillingScenario(db, seed, PetCareState.READY);
+            var now = DateTimeOffset.UtcNow;
+
+            var roomType = new LoaiPhong
+            {
+                TenPhong = "Phòng VIP",
+                GiaMoiDem = 450_000m,
+                IsActive = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.LoaiPhongSet.Add(roomType);
+            db.SaveChanges();
+
+            // Xóa dịch vụ Spa cũ để thành đơn Hotel-only (M2-L01)
+            db.DichVuTrongDonSet.RemoveRange(db.DichVuTrongDonSet);
+            var pet = db.ChiTietDonSet.First(p => p.DonDatLichId == seed.BookingId);
+            pet.LoaiPhongId = roomType.Id;
+            pet.GiaPhongCamKet = 450_000m;
+            pet.GiaPhongChot = 450_000m;
+            pet.SoDemChot = 2;
+
+            var booking = db.DonDatLichSet.Find(seed.BookingId)!;
+            booking.TongTamTinh = 900_000m;
+            db.SaveChanges();
+        });
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Cashier!));
+
+        using var resp = await client.PostAsJsonAsync($"/api/internal/bookings/{seed.BookingId}/invoices", new { requestId = Guid.NewGuid() });
+        resp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var body = await resp.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>(JsonOptions);
+        body!.Data!.TongTien.Should().Be(900_000m);
+        body.Data.ConPhaiTra.Should().Be(900_000m);
+        body.Data.DongTien.Should().ContainSingle(line =>
+            line.LoaiKhoan == "HOTEL" &&
+            line.SoLuong == 2 &&
+            line.DonGia == 450_000m &&
+            line.ThanhTien == 900_000m);
+    }
+
+    [Fact]
+    public async Task CreateInvoice_WithComboFeesAndDeposit_CalculatesTotalsAndDeductsDeposit()
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db =>
+        {
+            SeedBillingScenario(db, seed, PetCareState.READY);
+            var now = DateTimeOffset.UtcNow;
+
+            var combo = new Combo
+            {
+                TenCombo = "Combo Tắm Cắt Toàn Diện",
+                IsActive = true,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.ComboSet.Add(combo);
+            db.SaveChanges();
+
+            // Gắn Combo vào dịch vụ hiện có (400.000đ)
+            var svc = db.DichVuTrongDonSet.First();
+            svc.ComboId = combo.Id;
+            svc.DichVuId = null;
+            svc.TenSnapshot = combo.TenCombo;
+            svc.GiaChot = 400_000m;
+
+            // Thêm 1 phụ phí riêng pet (100.000đ) và 1 phụ phí chung đơn (50.000đ)
+            db.PhuPhiSet.AddRange(
+                new PhuPhi
+                {
+                    TenPhuPhi = "Phụ phí gỡ rối lông",
+                    SoTien = 100_000m,
+                    LyDo = "Lông rối bụng",
+                    DonDatLichId = seed.BookingId,
+                    ChiTietDonId = svc.ChiTietDonId,
+                    TaoBoiId = seed.Cashier!.Id,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                },
+                new PhuPhi
+                {
+                    TenPhuPhi = "Phí đón trễ",
+                    SoTien = 50_000m,
+                    LyDo = "Đón trễ 30p",
+                    DonDatLichId = seed.BookingId,
+                    ChiTietDonId = null,
+                    TaoBoiId = seed.Cashier!.Id,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                });
+
+            // Thêm tiền cọc đã thu 150.000đ
+            var deposit = new TienCoc
+            {
+                CoSoTinhSnapshot = 500_000m,
+                TyLe = 0.30m,
+                SoTienYeuCau = 150_000m,
+                HetHanAt = now.AddMinutes(30),
+                TrangThaiYeuCau = DepositRequestState.DA_DAP_UNG,
+                DonDatLichId = seed.BookingId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.TienCocSet.Add(deposit);
+            db.SaveChanges();
+
+            db.GiaoDichThuSet.Add(new GiaoDichThu
+            {
+                RequestId = Guid.NewGuid(),
+                SoTien = 150_000m,
+                PhuongThuc = PaymentMethod.BANK_TRANSFER,
+                GiaoDichAt = now,
+                XacNhanAt = now,
+                TienCocId = deposit.Id,
+                XacNhanBoiId = seed.Cashier!.Id,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.SaveChanges();
+        });
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Cashier!));
+
+        using var resp = await client.PostAsJsonAsync($"/api/internal/bookings/{seed.BookingId}/invoices", new { requestId = Guid.NewGuid() });
+        resp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var invoice = (await resp.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>(JsonOptions))!.Data!;
+        invoice.TongTien.Should().Be(550_000m); // 400k + 100k + 50k
+        invoice.CocKhauTru.Should().Be(150_000m);
+        invoice.ConPhaiTra.Should().Be(400_000m);
+        invoice.DongTien.Should().HaveCount(3);
+        invoice.DongTien.Should().ContainSingle(l => l.LoaiKhoan == "PHU_PHI" && l.TenPet == null && l.DienGiai!.StartsWith("Phí chung đơn:"));
+    }
+
+    [Fact]
+    public async Task CreateInvoice_WhenDepositCoversFullTotal_AutoTransitionsToPaidWithoutZeroReceipt()
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db =>
+        {
+            SeedBillingScenario(db, seed, PetCareState.READY);
+            var now = DateTimeOffset.UtcNow;
+
+            // Tổng hóa đơn là 200.000đ, cọc đã thu 300.000đ (đã hoàn 100.000đ -> còn lại 200.000đ khớp 100%)
+            var deposit = new TienCoc
+            {
+                CoSoTinhSnapshot = 1_000_000m,
+                TyLe = 0.30m,
+                SoTienYeuCau = 300_000m,
+                HetHanAt = now.AddMinutes(30),
+                TrangThaiYeuCau = DepositRequestState.DA_DAP_UNG,
+                DonDatLichId = seed.BookingId,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            db.TienCocSet.Add(deposit);
+            db.SaveChanges();
+
+            db.GiaoDichThuSet.Add(new GiaoDichThu
+            {
+                RequestId = Guid.NewGuid(),
+                SoTien = 300_000m,
+                PhuongThuc = PaymentMethod.BANK_TRANSFER,
+                GiaoDichAt = now,
+                XacNhanAt = now,
+                TienCocId = deposit.Id,
+                XacNhanBoiId = seed.Cashier!.Id,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.HoanCocSet.Add(new HoanCoc
+            {
+                RequestId = Guid.NewGuid(),
+                SoTien = 100_000m,
+                LyDo = "Hoàn phần cọc dư",
+                TrangThai = RefundState.DA_HOAN,
+                HoanAt = now,
+                TienCocId = deposit.Id,
+                TaoBoiId = seed.Cashier!.Id,
+                HoanBoiId = seed.Cashier!.Id,
+                CreatedAt = now,
+                UpdatedAt = now
+            });
+            db.SaveChanges();
+        });
+
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Cashier!));
+
+        using var resp = await client.PostAsJsonAsync($"/api/internal/bookings/{seed.BookingId}/invoices", new { requestId = Guid.NewGuid() });
+        resp.StatusCode.Should().Be(HttpStatusCode.Created);
+
+        var invoice = (await resp.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>(JsonOptions))!.Data!;
+        invoice.TongTien.Should().Be(200_000m);
+        invoice.CocKhauTru.Should().Be(200_000m);
+        invoice.ConPhaiTra.Should().Be(0m);
+        invoice.TrangThai.Should().Be("PAID");
+        invoice.PaidAt.Should().NotBeNull();
+
+        // Không tạo GiaoDichThu 0 đồng và gọi E26 tiếp bị chặn 409 INVALID_TRANSITION
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        (await db.GiaoDichThuSet.CountAsync(x => x.HoaDonId == invoice.MaHoaDon)).Should().Be(0);
+
+        using var checkoutResp = await client.PostAsJsonAsync($"/api/internal/invoices/{invoice.MaHoaDon}/checkout", new
+        {
+            requestId = Guid.NewGuid(),
+            phuongThuc = "CASH",
+            soTienThucNhan = 0,
+            soTienDaTraLai = 0
+        });
+        checkoutResp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+    }
+
+    [Fact]
+    public async Task WithdrawInvoice_RevokesUnpaidAndAllowsReplacementInvoiceWithLink()
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db => SeedBillingScenario(db, seed, PetCareState.READY));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Cashier!));
+
+        // 1. Lập hóa đơn lần 1 (200.000đ)
+        using var create1 = await client.PostAsJsonAsync($"/api/internal/bookings/{seed.BookingId}/invoices", new { requestId = Guid.NewGuid() });
+        create1.StatusCode.Should().Be(HttpStatusCode.Created);
+        var inv1 = (await create1.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>(JsonOptions))!.Data!;
+
+        // 2. E25: Thu hồi hóa đơn lần 1 -> REVOKED, giữ nguyên dòng tiền cũ, ẩn QR
+        using var withdrawResp = await client.PostAsJsonAsync($"/api/internal/invoices/{inv1.MaHoaDon}/withdraw", new
+        {
+            requestId = Guid.NewGuid(),
+            lyDo = "Thiếu phụ phí gỡ rối lông"
+        });
+        withdrawResp.StatusCode.Should().Be(HttpStatusCode.OK);
+        var revokedInv = (await withdrawResp.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>(JsonOptions))!.Data!;
+        revokedInv.TrangThai.Should().Be("REVOKED");
+        revokedInv.ThuHoiAt.Should().NotBeNull();
+        revokedInv.Qr.Should().BeNull();
+        revokedInv.TongTien.Should().Be(200_000m);
+
+        // 3. Lập lại hóa đơn lần 2 (M2-L04) -> ThayTheHoaDon trỏ về inv1.MaHoaDon
+        using var create2 = await client.PostAsJsonAsync($"/api/internal/bookings/{seed.BookingId}/invoices", new { requestId = Guid.NewGuid() });
+        create2.StatusCode.Should().Be(HttpStatusCode.Created);
+        var inv2 = (await create2.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>(JsonOptions))!.Data!;
+        inv2.TrangThai.Should().Be("UNPAID");
+        inv2.ThayTheHoaDon.Should().Be(inv1.MaHoaDon);
+
+        // 4. Thu tiền hóa đơn 2 thành PAID -> gọi E25 trên hóa đơn PAID bị chặn 409 INVALID_TRANSITION
+        using var checkout = await client.PostAsJsonAsync($"/api/internal/invoices/{inv2.MaHoaDon}/checkout", new
+        {
+            requestId = Guid.NewGuid(),
+            phuongThuc = "CASH",
+            soTienThucNhan = 200_000,
+            soTienDaTraLai = 0
+        });
+        checkout.StatusCode.Should().Be(HttpStatusCode.OK);
+
+        using var revokePaidResp = await client.PostAsJsonAsync($"/api/internal/invoices/{inv2.MaHoaDon}/withdraw", new
+        {
+            requestId = Guid.NewGuid(),
+            lyDo = "Thử thu hồi sau khi đã thu tiền"
+        });
+        revokePaidResp.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await revokePaidResp.Content.ReadFromJsonAsync<ApiResponse<InvoiceResponseDto>>(JsonOptions))!.ErrorCode.Should().Be("INVALID_TRANSITION");
     }
 
     private static string GenerateJwtFor(NhanVien nhanVien)
@@ -361,7 +651,8 @@ public class InvoicesEndpointTests
 
         var permCreate = new Quyen { MaQuyen = "INVOICE_CREATE", TenQuyen = "Lập hóa đơn" };
         var permCollect = new Quyen { MaQuyen = "INVOICE_COLLECT", TenQuyen = "Thu tiền hóa đơn" };
-        db.QuyenSet.AddRange(permCreate, permCollect);
+        var permRevoke = new Quyen { MaQuyen = "INVOICE_REVOKE", TenQuyen = "Thu hồi hóa đơn" };
+        db.QuyenSet.AddRange(permCreate, permCollect, permRevoke);
 
         var cashier = new NhanVien
         {
@@ -380,7 +671,8 @@ public class InvoicesEndpointTests
         {
             db.NhanVienQuyenSet.AddRange(
                 new NhanVienQuyen { NhanVienId = cashier.Id, MaQuyen = "INVOICE_CREATE", CapBoiId = cashier.Id, CapAt = now },
-                new NhanVienQuyen { NhanVienId = cashier.Id, MaQuyen = "INVOICE_COLLECT", CapBoiId = cashier.Id, CapAt = now }
+                new NhanVienQuyen { NhanVienId = cashier.Id, MaQuyen = "INVOICE_COLLECT", CapBoiId = cashier.Id, CapAt = now },
+                new NhanVienQuyen { NhanVienId = cashier.Id, MaQuyen = "INVOICE_REVOKE", CapBoiId = cashier.Id, CapAt = now }
             );
         }
 
