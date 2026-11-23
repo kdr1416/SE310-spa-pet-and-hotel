@@ -323,31 +323,33 @@ internal static class CareProjection
         TinhTrangLong = ParseFurConditions(pet.TinhTrangLong),
         MaLoaiPhong = pet.LoaiPhongId,
         TenNhanVienPhuTrach = assigneeName ?? pet.NhanVien?.TenNhanVien,
-        DichVu = pet.DichVuTrongDonChiTietDonItems.OrderBy(line => line.Id).Select(line => new OrderService
-        {
-            MaDichVuTrongDon = line.Id,
-            MaDichVu = line.DichVuId,
-            MaCombo = line.ComboId,
-            MaKhungGio = line.KhungGioId,
-            TenDichVu = line.TenSnapshot,
-            TrangThai = line.TrangThai.ToString(),
-            SizeChot = line.SizeChot?.ToString(),
-            GiaChot = line.GiaChot,
-            ThanhPhan = line.ThanhPhanDichVuTrongDonDichVuTrongDonItems.OrderBy(component => component.Id)
-                .Select(component => new Component
-                {
-                    MaThanhPhan = component.Id,
-                    MaDichVu = component.DichVuId,
-                    TenDichVu = component.DichVu.TenDichVu,
-                    TrangThai = component.TrangThai.ToString(),
-                    HoanTatAt = component.HoanTatAt
-                }).ToList()
-        }).ToList(),
+        DichVu = pet.DichVuTrongDonChiTietDonItems.OrderBy(line => line.Id).Select(OrderService).ToList(),
         NhatKy = pet.NhatKyChamSocChiTietDonItems.OrderBy(log => log.GhiNhanAt).ThenBy(log => log.Id)
             .Select(log => Log(log, actor)).ToList(),
         NhanSom = pet.NhanSom,
         BanGiaoAt = pet.BanGiaoAt,
         TraLaiAt = pet.TraLaiAt
+    };
+
+    public static OrderService OrderService(Core.Entities.Billing.DichVuTrongDon line) => new()
+    {
+        MaDichVuTrongDon = line.Id,
+        MaDichVu = line.DichVuId,
+        MaCombo = line.ComboId,
+        MaKhungGio = line.KhungGioId,
+        TenDichVu = line.TenSnapshot,
+        TrangThai = line.TrangThai.ToString(),
+        SizeChot = line.SizeChot?.ToString(),
+        GiaChot = line.GiaChot,
+        ThanhPhan = line.ThanhPhanDichVuTrongDonDichVuTrongDonItems.OrderBy(component => component.Id)
+            .Select(component => new Component
+            {
+                MaThanhPhan = component.Id,
+                MaDichVu = component.DichVuId,
+                TenDichVu = component.DichVu.TenDichVu,
+                TrangThai = component.TrangThai.ToString(),
+                HoanTatAt = component.HoanTatAt
+            }).ToList()
     };
 
     public static CareLog Log(NhatKyChamSoc log, NhanVien actor) => new()
