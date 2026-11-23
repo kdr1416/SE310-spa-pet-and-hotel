@@ -1338,3 +1338,285 @@ describe("live care and billing commands", () => {
     });
   });
 });
+
+describe("hybrid-policy", () => {
+  const requestId = "550e8400-e29b-41d4-a716-446655440006";
+  const bookingId = 101;
+  const trackingPair = { trackingCode: "ABCD1234", phone: "0900000000" };
+  const liveFailure = {
+    success: false,
+    data: null,
+    message: "Cần quyền INVOICE_CREATE",
+    errorCode: "FORBIDDEN",
+    errors: [],
+    traceId: "test-hybrid-live-trace",
+  };
+
+  let callOperation, mockCall, seed, adapter, updated, setItem;
+
+  function setDemoActor(id) {
+    sessionStorage.setItem("petspa_mock_session", JSON.stringify({ id }));
+  }
+
+  function respondWith(data, envelope = { success: true, data, message: "Thành công" }) {
+    adapter.mockImplementation(async (config) => ({
+      config, data: envelope, status: 200, statusText: "", headers: {},
+    }));
+    return envelope;
+  }
+
+  function expectWorkspaceSignals(count) {
+    const storageUpdates = setItem.mock.calls.filter(([key]) => key === "petspa_workspace_update");
+    expect(updated).toHaveBeenCalledTimes(count);
+    expect(storageUpdates).toHaveLength(count);
+    if (count > 0) {
+      expect(localStorage.getItem("petspa_workspace_update")).toBe(storageUpdates.at(-1)[1]);
+    }
+  }
+
+  async function startClient(mode = "false") {
+    vi.stubEnv("VITE_USE_MOCK_API", mode ?? undefined);
+    const { default: client } = await import("../../src/services/api/httpClient");
+    ({ callOperation } = await import("../../src/services/api/operationClient"));
+    adapter = vi.fn(async () => { throw new Error("Unexpected HTTP request"); });
+    client.defaults.adapter = adapter;
+  }
+
+  beforeEach(async () => {
+    vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+
+    const { createSeed } = await import("../../src/services/mock/seed");
+    const { execute } = await import("../../src/services/mock/mockOperations");
+    seed = createSeed({ demo: true });
+    seed.bookings[0].id = bookingId;
+    seed.bookings[0].trackingCode = trackingPair.trackingCode;
+    // Keep the real demo operations and replace only their IndexedDB boundary.
+    mockCall = vi.fn(async (action, payload, actor) => execute(seed, action, payload, actor));
+    vi.doMock("../../src/services/mock/mockRepository", () => ({ mockCall }));
+
+    updated = vi.fn();
+    window.addEventListener("petspa-workspace-updated", updated);
+    setItem = vi.spyOn(Storage.prototype, "setItem");
+  });
+
+  afterEach(() => {
+    window.removeEventListener("petspa-workspace-updated", updated);
+    vi.restoreAllMocks();
+    vi.doUnmock("../../src/services/mock/mockRepository");
+    vi.unstubAllEnvs();
+    vi.resetModules();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  it.each([["default", null], ["enabled", "true"]])(
+    "preserves demo reads, writes and public lookup in %s mock mode", async (_name, mode) => {
+      await startClient(mode);
+      setDemoActor(3);
+
+      await expect(callOperation("getWorkspace")).resolves.toMatchObject({
+        success: true, data: { bookings: [expect.objectContaining({ id: bookingId }), expect.any(Object)] },
+      });
+      expect(mockCall).toHaveBeenLastCalledWith("getWorkspace", {}, 3);
+      expectWorkspaceSignals(0);
+
+      setDemoActor(1);
+      const change = { id: bookingId, note: "Demo booking note" };
+      await expect(callOperation("updateBooking", change)).resolves.toMatchObject({
+        success: true, data: { ghiChuKhach: change.note },
+      });
+      expect(mockCall).toHaveBeenLastCalledWith("updateBooking", change, 1);
+
+      sessionStorage.clear();
+      await expect(callOperation("lookupBooking", trackingPair, true)).resolves.toMatchObject({
+        success: true, data: { id: bookingId, ghiChuKhach: change.note },
+      });
+      expect(mockCall).toHaveBeenLastCalledWith("lookupBooking", trackingPair, null);
+      expect(adapter).not.toHaveBeenCalled();
+      expectWorkspaceSignals(1);
+    },
+  );
+
+  it.each([["getSettings", 1, "vaccinePolicy"], ["getFinance", 1, "ledger"], ["getSchedule", 2, "users"]])(
+    "uses the stored demo actor for %s", async (action, demoId, resultKey) => {
+      await startClient();
+      setDemoActor(demoId);
+
+      const result = await callOperation(action);
+
+      expect(result.success).toBe(true);
+      expect(result.data).toHaveProperty(resultKey);
+      expect(mockCall).toHaveBeenCalledExactlyOnceWith(action, {}, demoId);
+      expect(adapter).not.toHaveBeenCalled();
+      expectWorkspaceSignals(0);
+    },
+  );
+
+  it("uses demo Staff 2 for schedule after live Staff 1 logs in", async () => {
+    await startClient();
+    const { useAuthStore } = await import("../../src/stores/auth");
+    const auth = useAuthStore(createPinia());
+    const staff = {
+      maNhanVien: 1,
+      tenNhanVien: "Nhân viên live",
+      vaiTro: "STAFF",
+      quyen: ["SCHEDULE_REGISTER"],
+      dangHoatDong: true,
+    };
+    respondWith({ accessToken: "test-staff-token", nhanVien: staff });
+    expect((await auth.login("test-staff", "test-password")).success).toBe(true);
+    const identity = auth.user;
+    const storedIdentity = localStorage.getItem("petspa_auth_user");
+
+    const result = await callOperation("getSchedule");
+
+    expect(result.data.users).toMatchObject([{ id: 2, vaiTro: "STAFF" }]);
+    expect(mockCall).toHaveBeenCalledExactlyOnceWith("getSchedule", {}, 2);
+    expect(adapter).toHaveBeenCalledTimes(1);
+    expect(auth.user).toBe(identity);
+    expect(auth.user).toMatchObject({ ...staff, id: 1, role: "STAFF" });
+    expect(auth.isAdmin).toBe(false);
+    expect(localStorage.getItem("petspa_auth_user")).toBe(storedIdentity);
+    expectWorkspaceSignals(0);
+  });
+
+  it.each([null, "{", '{"id":3}', '{"id":"2"}'])(
+    "rejects a private demo fallback with invalid stored session %j", async (session) => {
+      await startClient();
+      if (session !== null) sessionStorage.setItem("petspa_mock_session", session);
+
+      await expect(callOperation("getSchedule")).rejects.toMatchObject({
+        message: "Vui lòng đăng nhập lại.",
+      });
+
+      expect(mockCall).not.toHaveBeenCalled();
+      expect(adapter).not.toHaveBeenCalled();
+      expectWorkspaceSignals(0);
+    },
+  );
+
+  it("lets demo operations reject an unknown action without sending HTTP", async () => {
+    await startClient();
+    setDemoActor(1);
+
+    await expect(callOperation("unknownOperation")).rejects.toThrow("Thao tác chưa được hỗ trợ.");
+
+    expect(mockCall).toHaveBeenCalledExactlyOnceWith("unknownOperation", {}, 1);
+    expect(adapter).not.toHaveBeenCalled();
+    expectWorkspaceSignals(0);
+  });
+
+  it.each([
+    ["updateBooking", { id: bookingId, bookingId, note: "Live booking note" }, false],
+    ["addSurcharge", { id: bookingId, bookingId, ruleId: 1, note: "Live surcharge" }, false],
+    ["customerRequest", { ...trackingPair, type: "ADDON", note: "Live request" }, true],
+    ["reviewRequest", { id: bookingId, approved: true }, false],
+    ["resendTracking", { ...trackingPair, email: "demo@example.test" }, true],
+    ["updateAccount", { id: 1, name: "Live account" }, false],
+  ])("blocks %s before it can reach demo data", async (action, payload, isPublic) => {
+    await startClient();
+    if (!isPublic) setDemoActor(1);
+
+    await expect(callOperation(action, payload, isPublic)).rejects.toMatchObject({
+      success: false, data: null, errorCode: "HYBRID_ENTITY_UNSUPPORTED",
+    });
+
+    expect(mockCall).not.toHaveBeenCalled();
+    expect(adapter).not.toHaveBeenCalled();
+    expectWorkspaceSignals(0);
+  });
+
+  it("publishes one workspace event and storage signal after a private live mutation without a demo session", async () => {
+    await startClient();
+    localStorage.setItem("petspa_auth_token", "test-admin-token");
+    const envelope = respondWith({ maHoaDon: 23, trangThai: "UNPAID" });
+
+    await expect(callOperation("createInvoice", { bookingId, requestId })).resolves.toEqual(envelope);
+
+    expect(adapter).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      method: "post", url: "/internal/bookings/101/invoices",
+    }));
+    expect(mockCall).not.toHaveBeenCalled();
+    expectWorkspaceSignals(1);
+  });
+
+  it.each([
+    ["checkAvailability", { maKhungGio: 73 }, "/availability"],
+    ["lookupTracking", { trackingCode: "ABCD1234", soDienThoai: "0900000000" }, "/tracking/lookup"],
+  ])("keeps %s quiet even when invoked without the public flag", async (action, payload, url) => {
+    await startClient();
+    const envelope = respondWith({});
+
+    await expect(callOperation(action, payload)).resolves.toEqual(envelope);
+
+    expect(adapter).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ method: "post", url }));
+    expect(mockCall).not.toHaveBeenCalled();
+    expectWorkspaceSignals(0);
+  });
+
+  it("keeps a successful public booking quiet", async () => {
+    await startClient();
+    const { createCustomerBooking } = await import("../../src/services/api/bookingService");
+    const envelope = respondWith({ maDon: bookingId, trackingCode: "ABCD1234" });
+
+    await expect(createCustomerBooking({
+      requestId,
+      maKhungGio: 73,
+      lienHe: { hoTen: "Khách test", soDienThoai: "0900000000", email: "customer@example.test" },
+      thuCung: [{ tenThuCung: "Miu", loaiPet: "MEO", canNangKhaiBao: 5, dichVu: [{ maDichVu: 11 }] }],
+    })).resolves.toEqual(envelope);
+
+    expect(adapter).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ method: "post", url: "/bookings" }));
+    expect(mockCall).not.toHaveBeenCalled();
+    expectWorkspaceSignals(0);
+  });
+
+  it.each(["http", "network", "validation", "unsuccessful envelope"])(
+    "keeps %s failure free of demo fallback and workspace signals", async (failureKind) => {
+      await startClient();
+      setDemoActor(1);
+      if (failureKind === "http") {
+        adapter.mockImplementation(async (config) => {
+          throw new AxiosError(liveFailure.message, AxiosError.ERR_BAD_REQUEST, config, {}, {
+            config, status: 403, data: liveFailure,
+          });
+        });
+      }
+      if (failureKind === "network") {
+        adapter.mockImplementation(async (config) => {
+          throw new AxiosError("Network Error", AxiosError.ERR_NETWORK, config, {});
+        });
+      }
+      if (failureKind === "unsuccessful envelope") respondWith(null, liveFailure);
+
+      const operation = callOperation("createInvoice", {
+        bookingId: failureKind === "validation" ? undefined : bookingId, requestId,
+      });
+
+      if (failureKind === "unsuccessful envelope") await expect(operation).resolves.toEqual(liveFailure);
+      else if (failureKind === "http") await expect(operation).rejects.toEqual(liveFailure);
+      else await expect(operation).rejects.toMatchObject({ success: false, data: null });
+
+      expect(adapter).toHaveBeenCalledTimes(failureKind === "validation" ? 0 : 1);
+      expect(mockCall).not.toHaveBeenCalled();
+      expectWorkspaceSignals(0);
+    },
+  );
+
+  it("signals completion of a demo settings mutation without sending HTTP", async () => {
+    await startClient();
+    setDemoActor(1);
+    const policy = { SPA: false, HOTEL: true, COMBO_SPA_HOTEL: true };
+
+    await expect(callOperation("updateVaccinePolicy", { policy })).resolves.toMatchObject({
+      success: true, data: policy,
+    });
+
+    expect(seed.settings.vaccinePolicy).toEqual(policy);
+    expect(mockCall).toHaveBeenCalledExactlyOnceWith("updateVaccinePolicy", { policy }, 1);
+    expect(adapter).not.toHaveBeenCalled();
+    expectWorkspaceSignals(1);
+  });
+});
