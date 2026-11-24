@@ -44,7 +44,7 @@ jobs:
         ports:
           - 127.0.0.1:5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U postgres -d postgres"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -66,4 +66,25 @@ jobs:
         run: dotnet build backend/PetSpa.sln --no-restore
 
       - name: Run unit & integration tests
-        run: dotnet test backend/PetSpa.sln --no-build --verbosity normal
+        env:
+          Logging__LogLevel__Default: Warning
+          Logging__LogLevel__Microsoft.EntityFrameworkCore: Warning
+        run: >-
+          dotnet test backend/PetSpa.sln --no-build --verbosity minimal
+          --logger "console;verbosity=minimal"
+          --logger "trx;LogFileName=backend.trx"
+          --results-directory TestResults/backend
+
+      - name: Summarize backend tests
+        if: always()
+        shell: pwsh
+        run: ./.github/scripts/Write-TestSummary.ps1 -ResultsDirectory TestResults/backend -SummaryPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload backend test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-test-results
+          path: TestResults/backend/**/*.trx
+          if-no-files-found: warn
+          retention-days: 7

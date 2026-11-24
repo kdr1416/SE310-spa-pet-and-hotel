@@ -598,9 +598,10 @@ public sealed class ExtraChargeService(
     {
         var prices = await context.BangGiaSizeSet.AsNoTracking()
             .Where(p => p.DichVuId == dichVuId && p.ComboId == comboId)
+            .Select(p => new { p.KhoangSize.MaSize, p.DonGia })
             .ToListAsync(ct);
 
-        return prices.ToDictionary(p => (SizeBand)p.SizeId, p => p.DonGia);
+        return prices.ToDictionary(p => p.MaSize, p => p.DonGia);
     }
 
     private async Task<HashSet<string>> LoadAllowedDetanglingFurCodesAsync(CancellationToken ct)
