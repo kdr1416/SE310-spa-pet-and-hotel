@@ -1,6 +1,7 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
+using PetSpa.Api.Services.Scheduling;
 using PetSpa.Core.Common;
 using PetSpa.Core.DTOs.Booking;
 using PetSpa.Core.DTOs.Care;
@@ -15,7 +16,7 @@ using PetSpa.Core.Interfaces.Care;
 
 namespace PetSpa.Api.Services.Care;
 
-public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) : ICheckinService
+public class CheckinService(PetSpaDbContext dbContext, CareOperation operation, TimeProvider clock) : ICheckinService
 {
     private const string Permission = "CHECKIN_PERFORM";
     private const string ReassignOperation = "CARE_REASSIGN";
@@ -113,27 +114,11 @@ public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) 
         if (pet is null)
             return CareResult<BookingPet>.NotFound();
 
-        if (dbContext.Database.IsRelational())
-        {
-            var slotIds = pet.DichVuTrongDonChiTietDonItems
-                .Where(line => line.TrangThai != OrderServiceState.HUY)
-                .Select(line => line.KhungGioId)
-                .Distinct()
-                .OrderBy(id => id)
-                .ToArray();
-
-            if (slotIds.Length > 0)
-            {
-                await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                    $"SELECT id FROM khung_gio_dat_lich WHERE id = ANY({slotIds}) ORDER BY id FOR UPDATE",
-                    cancellationToken);
-            }
-
-            var todayHcm = CareOperation.HcmDate(now);
-            await dbContext.Database.ExecuteSqlInterpolatedAsync(
-                $"SELECT id FROM dang_ky_ca WHERE nhan_vien_id = {newEmployeeId} AND ngay = {todayHcm} ORDER BY id FOR UPDATE",
-                cancellationToken);
-        }
+        await LockAssignmentResourcesAsync(pet, newEmployeeId, cancellationToken);
+        now = clock.GetUtcNow();
+        var currentActor = await operation.FindEmployeeWithGrantAsync(actor.Id, Permission, cancellationToken);
+        if (currentActor is null) return CareResult<BookingPet>.Forbidden();
+        actor = currentActor;
 
         if (pet.DonDatLich.HoaDonDonDatLichItems.Any(invoice => invoice.TrangThai != InvoiceState.REVOKED))
             return CareResult<BookingPet>.InvalidTransition("Đơn đặt lịch đã có hóa đơn hiệu lực, không thể phân công lại.");
@@ -230,6 +215,15 @@ public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) 
             .SingleOrDefaultAsync(pet => pet.Id == petId, cancellationToken);
         if (pet is null)
             return CareResult<BookingPet>.NotFound();
+
+        if (!preflight)
+        {
+            await LockAssignmentResourcesAsync(pet, request.MaNhanVien, cancellationToken);
+            now = clock.GetUtcNow();
+            var currentActor = await operation.FindEmployeeWithGrantAsync(actor.Id, Permission, cancellationToken);
+            if (currentActor is null) return CareResult<BookingPet>.Forbidden();
+            actor = currentActor;
+        }
 
         var booking = pet.DonDatLich;
         if (booking.TrangThai is not (BookingState.CONFIRMED or BookingState.IN_PROGRESS) ||
@@ -355,6 +349,21 @@ public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) 
 
         return new CareResult<BookingPet>(200, CareProjection.Pet(pet, actor, assignee.TenNhanVien),
             AssigneeId: assignee.Id, OverrideReason: hasCurrentShift ? null : "ADMIN_OVERRIDE_SHIFT");
+    }
+
+    private async Task LockAssignmentResourcesAsync(ChiTietDon pet, int employeeId, CancellationToken ct)
+    {
+        // CareOperation already owns the booking lock. Keep the employee key across dates
+        // so an assignment today also serializes with removal of tomorrow's Hotel shift.
+        await EmployeeScheduleLock.AcquireAsync(dbContext, employeeId, ct);
+        if (!dbContext.Database.IsRelational()) return;
+        var slotIds = pet.DichVuTrongDonChiTietDonItems.Where(x => x.TrangThai != OrderServiceState.HUY)
+            .Select(x => x.KhungGioId).Append(pet.DonDatLich.KhungGioId).Distinct().OrderBy(x => x).ToArray();
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT id FROM khung_gio_dat_lich WHERE id = ANY({slotIds}) ORDER BY id FOR UPDATE", ct);
+        var day = CareOperation.HcmDate(clock.GetUtcNow());
+        await dbContext.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT id FROM dang_ky_ca WHERE nhan_vien_id = {employeeId} AND ngay = {day} ORDER BY id FOR UPDATE", ct);
     }
 
     private static CheckinResult ToCheckinResult(CareResult<BookingPet> result) =>

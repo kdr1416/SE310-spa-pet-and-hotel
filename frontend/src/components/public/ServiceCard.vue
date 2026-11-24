@@ -10,7 +10,8 @@
       <h3>{{ item.title }}</h3>
       <p class="muted flex-1">{{ item.description }}</p>
       <div class="flex items-center justify-between gap-3">
-        <span class="font-bold"
+        <span v-if="!Number.isFinite(item.price)" class="font-bold">Chưa có giá</span>
+        <span v-else class="font-bold"
           >{{ item.category === "Hotel" ? "" : "Từ " }}{{ formatCurrency(item.price)
           }}<small v-if="item.category === 'Hotel'" class="muted">
             / đêm</small

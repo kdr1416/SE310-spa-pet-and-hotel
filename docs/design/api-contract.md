@@ -104,6 +104,7 @@ E03 đổi GET draft thành POST cùng /api/availability để truyền nhu cầ
 | E61 | POST | /api/internal/order-services/{id}/components/{componentId}/complete | CARE_UPDATE | UC24/19B | Command | OrderService | 200 |
 | E62 | GET | /api/internal/fur-conditions | CHECKIN_PERFORM | UC23 | None | FurConditionItem[] | 200 |
 | E63 | PUT | /api/admin/fur-conditions | SYSTEM_CONFIG | UC64 | FurConditionsWrite | FurConditionItem[] | 200 |
+| E64 | GET | /api/booking-options | Public | UC14/23B | BookingOptionsQuery | BookingOptions | 200 |
 
 ## 3. Dictionary DTO
 
@@ -120,6 +121,7 @@ E03 đổi GET draft thành POST cùng /api/availability để truyền nhu cầ
 | BookingQuery | trang?:int>=1=1; kichThuocTrang?:int[1,100]=20; tuNgay?:date; denNgay?:date; trangThai?:code |
 | CustomerQuery | soDienThoai:text(10 chữ số) |
 | ShiftQuery | ngay:date; maCa:id |
+| BookingOptionsQuery | ngay:date (hôm nay Asia/Ho_Chi_Minh đến +90 ngày, inclusive) |
 | ScheduleQuery | tuNgay:date; denNgay:date; maNhanVien?:id (Admin-only) |
 | AvailabilityQuery | maKhungGio:id; ngayTra:date; thuCung:PetDemand[] |
 | PetDemand | maLoaiPhong?:id; dichVu:ServiceSelection[] |
@@ -206,6 +208,9 @@ Các response scalar/object không có trường tùy ý ngoài bảng. Các ki�
 | Tracking | maDon:id; trackingCode:text; trangThai:BookingState; batDauDuKien:instant; ketThucDuKien:instant; tongTamTinh:money; thuCung:BookingPet[]; hoaDon:Invoice hoặc null; tienCoc:Deposit hoặc null; hanhDongChoPhep:text[] |
 | Shift | maCa:id; tenCa:text; gioBatDau:time; gioKetThuc:time; sucChuaPet:int; tranPhut:int; dangHoatDong:bool |
 | Slot | maKhungGio:id; ngay:date; maCa:id; moNhanKhach:bool; tongSlot:int; slotDaDat:int; phutDaGiu:int; tranPhut:int |
+| BookingOptions | ngay:date; ca:BookingShiftOption[] |
+| BookingShiftOption | maCa:id; tenCa:text; gioBatDau:time; gioKetThuc:time; maKhungGio:id hoặc null; moNhanKhach:bool |
+| PageBookingPet | items:BookingPet[]; trang:int; kichThuocTrang:int; tongSo:int |
 | ShiftRegistration | maDangKy:id; maNhanVien:id; ngay:date; maCa:id; trangThai:PENDING/APPROVED/REJECTED; lyDoDieuChuyen:text hoặc null |
 | ShiftWindow | maDot:id; tuNgay:date; denNgay:date; moAt:instant; dongAt:instant |
 | Holiday | ngay:date; nghiNhanKhach:bool; lyDo:text |
@@ -239,7 +244,11 @@ Booking và Tracking dùng projection Public-safe: không password/JWT, object p
 | E20/21/22 | Chưa invoice hiệu lực, pet chưa DONE; Spa thêm ở WAITING/IN_PROGRESS/PAUSED, dùng size chốt; giữ cả phút và suất ca thực hiện. CANCEL cần PET_CANCEL_LINE/Admin theo nhánh và phần việc chưa hoàn tất; không hủy phần đã làm để nhả lại phút. COMPLETE cần care. Phí gỡ rối phải có tình trạng lông đánh dấu cho phép phụ phí gỡ rối (mặc định ROI_NANG) hoặc ảnh chứng minh. |
 | E23/25 | Một invoice hiệu lực; pet không hủy READY/DONE và pet hủy đã quyết toán. Toàn pet hủy vẫn invoice phần đã làm. Invoice không rỗng; zero due được cọc bao phủ vẫn invoice/PAID có xác nhận phân bổ. Thu hồi chỉ UNPAID; giữ lines, ẩn QR; bản mới maHoaDon mới và thayTheHoaDon. |
 | E26 | soTienThucNhan-soTienDaTraLai đúng conPhaiTra; cọc phân bổ hợp lệ, tiền thừa đã trả có dấu vết. Sai 409 AMOUNT_MISMATCH, giữ UNPAID. Chỉ PAID, không DONE. Retry không thu lại; không giao dịch thu 0 khi cọc đã đủ. |
-| E28/29/54/55 | Đợt đang mở, không chồng ca; APPROVED là công bố. Đổi ca đã duyệt chỉ Admin có lý do; không phá assignment hoặc giảm phút dưới cam kết. |
+| E27 | STAFF chỉ xem lịch của chính mình và không được truyền maNhanVien, kể cả ID chính mình (403 FORBIDDEN); ADMIN được dùng filter này. Khoảng ngày tối đa 90 ngày tính cả hai đầu; đảo/vượt khoảng trả 400 INVALID_DATE_RANGE; thiếu/sai format trả 400 VALIDATION_FAILED. |
+| E28/29/54/55 | Chỉ E28 bắt buộc ngày đăng ký thuộc đợt đang mở (moAt <= now <= dongAt). E54 tạo đợt độc lập; E29/E55 cho phép Admin duyệt/điều chuyển sau deadline theo UC50. Không chồng ca; APPROVED là công bố. Đổi ca đã duyệt chỉ Admin có lý do; không phá assignment hoặc giảm phút dưới cam kết. |
+| E54 (chi tiết) | Mốc moAt/dongAt được chuẩn hóa UTC theo độ chính xác microsecond lưu trữ trước khi kiểm tra khoảng, fingerprint và trả snapshot. Khoảng chuẩn hóa có moAt >= dongAt trả 400 VALIDATION_FAILED; không để lỗi constraint thành 500. |
+| E29 (chi tiết) | Chỉ quyết định bản ghi PENDING; state khác trả 409 INVALID_TRANSITION, trừ replay hợp lệ. APPROVE/REJECT đều lưu người và thời điểm quyết định; REJECT ghi REJECTED, lý do tùy chọn lưu audit, không tạo slot và không ghi vào lý do điều chuyển. |
+| E55 (chi tiết) | State không phải APPROVED, trùng/chồng ca đích hoặc assignment nguồn đang được bảo vệ trả 409 INVALID_TRANSITION; giảm công suất dưới cam kết trả 409 CAPACITY_EXCEEDED. Key replay cùng dữ liệu trả 200 snapshot; khác dữ liệu/target trả 409 IDEMPOTENCY_CONFLICT theo quy tắc chung. Không dùng ASSIGNMENT_UNAVAILABLE cho guard rút ca này. |
 | E30–34/56/57 | Giá đủ 4 size, combo đúng thành phần, khoảng size chuẩn, không giảm công suất dưới reservation. Giá/policy mới không đổi snapshot đơn cũ. Ngày nghỉ đóng nhận/trả mới, giữ trực Hotel đang ở. cocHotel=true yêu cầu giuCho=true. |
 | E39/40/41 | Email OTP mới chỉ BOOKING, EXISTING_PETS phải email master đúng hồ sơ. Không tìm thấy vẫn E39 trả challenge giả/thông báo chung, không tiết lộ master. Wrong OTP 400; hết hạn/rate 429 hoặc 400 OTP_INVALID không tiết lộ hồ sơ. Proof TTL/scope kiểm tra server, dùng cho lookup chỉ đúng hồ sơ; booking tiêu thụ proof một lần và gắn requestId. |
 | E42–46 | Nhân viên đối soát thực nhận; thiếu không đổi deadline, đủ trước hạn mới đáp ứng; hết hạn không hồi sinh đơn. Tiền muộn vẫn ghi thực nhận và tạo nghĩa vụ hoàn. Khoản dành hoàn gồm CHO_HOAN; không khấu trừ/giữ/hoàn vượt thực nhận; sai 409 AMOUNT_MISMATCH. E45 chỉ Admin sau thực trả, không trả lại lần nữa khi retry. |
@@ -247,6 +256,8 @@ Booking và Tracking dùng projection Public-safe: không password/JWT, object p
 | E50/51 | Resend chỉ email snapshot các đơn chưa kết thúc theo D19; luôn 202 cùng message, không trả mã/list. Mất mã đơn hủy còn hoàn thì quầy hỗ trợ. Unlock Admin reset scope cụ thể, audit; không bypass pair. |
 | E52/53/60 | Admin-only; ngoại lệ ảnh gắn pet/lý do trong audit. Đổi quyền/role giữ >=1 Admin hoạt động, không tự mở CRUD tài khoản/reset password. Thay quyền có hiệu lực request tiếp theo. |
 | E58/59 | Đổi vaccine đơn cũ có lý do và xác nhận thông báo; không sửa snapshot lịch sử invoice/giá. Miễn phí đón trễ sau PAID ghi audit, không tạo invoice phụ hoặc thu thêm. |
+
+**Clarification Scheduling Task 11 (GitHub #48) — được người dùng duyệt 2026-11-24:** Phân biệt thời hạn nhân viên đăng ký (E28) với thao tác Admin chốt/điều chuyển lịch (E29/E55); không yêu cầu một đợt đang mở để tạo E54. Không đổi route, DTO, schema hoặc thêm bước publish. Thiết kế chi tiết: [Issue #24](../superpowers/specs/2026-11-23-issue-24-shift-scheduling-design.md).
 
 ## 6. Ví dụ và quy tắc ánh xạ
 
@@ -259,6 +270,12 @@ DB can_nang_chot -> JSON canNangChot; size_chot ->sizeChot; so_dien_thoai ->soDi
 QR chỉ invoice UNPAID hiệu lực và conPhaiTra>0; nội dung mã đơn/mã invoice, không SĐT/email. Deposit QR chỉ yêu cầu còn hiệu lực; hết hạn ẩn và hướng dẫn quầy, không tự xác nhận. Không Public command PAID/DA_HOAN.
 
 ## 7. Cửa khóa
+
+**Amendment được người dùng duyệt 2026-11-23 — Phase 2 Spa UI:** E64 Public đọc ca/slot, không ghi DB; active ca left join slot đúng ngày, nghỉ/đóng/missing slot không nhận khách. Không trả counters/employee/private data; E03/E04 vẫn quyết định sức chứa. Ngày ngoài khoảng hoặc sai format: 400 VALIDATION_FAILED; hạ tầng: 503 TEMPORARY_FAILURE. Sort gioBatDau rồi maCa.
+
+E62 đưa lên Sprint 2, chỉ trả FUR_CONDITIONS active theo schema FurConditionItem; không seed khi GET; thiếu/hỏng config: 503 TEMPORARY_FAILURE. E38 đưa lên Sprint 2, CARE_UPDATE; STAFF chỉ current assignment, ADMIN theo scope. Chỉ booking IN_PROGRESS và pet WAITING/IN_PROGRESS/PAUSED/READY. E38 dùng BookingQuery nhưng trangThai là PetState trong bốn mã này; date filters là ngày nhận booking, absent không lọc ngày; from<=to và khoảng tối đa 90 ngày. Count sau authorization, page default20/max100; sort batDauDuKien rồi maChiTietDon. Media private ký sau filter/page. Không nhận maNhanVien để STAFF tự mở scope; permission/state errors theo mục1.
+
+Registry hiện hành có **71 operation riêng biệt** sau E64: Sprint1=15, Sprint2=32, Sprint3=24. Con số68 bên dưới là baseline lịch sử M2-15; E62/E63 đã có trong registry nhưng bị bỏ sót ở tổng cũ (registry trước E64 có70). Amendment này chuẩn hóa số đếm và không đổi schema33bảng. Spec: `docs/superpowers/specs/2026-11-23-issue-26-phase2-spa-ui-design.md` đã duyệt.
 
 68 operations thuộc baseline được nhóm trưởng duyệt, không chứng minh endpoints đã tồn tại. Route bổ sung E39–61, E03 POST và ngữ nghĩa E32 đã được chấp nhận trong M2-15. Các tên DTO mới là quyết định thiết kế đã duyệt, không phải tên được suy diễn là có sẵn trong SRS.
 

@@ -18,7 +18,7 @@ public sealed class SpaCapacityCalculator(PetSpaDbContext context)
         var effectiveUsage = new Dictionary<int, (int Pets, long Minutes)>();
         if (readAsOfNow.HasValue)
         {
-            var slotIds = demands.Select(x => x.Slot.Id).Distinct().ToArray();
+            var slotIds = demands.Select(x => x.Slot.Id).Distinct().ToList();
             var cutoff = readAsOfNow.Value;
             var expired = context.DichVuTrongDonSet.Where(s => s.TrangThai != OrderServiceState.HUY &&
                 s.ChiTietDon.DonDatLich.TrangThai == BookingState.PENDING &&
@@ -38,8 +38,8 @@ public sealed class SpaCapacityCalculator(PetSpaDbContext context)
                 effectiveUsage[slot.Id] = (slot.SlotDaDat - slot.ExpiredPets, slot.PhutDaGiu - slot.ExpiredMinutes);
             }
         }
-        var days = demands.Select(demand => demand.Slot.Ngay).Distinct().ToArray();
-        var shiftIds = demands.Select(demand => demand.Slot.CaLamViecId).Distinct().ToArray();
+        var days = demands.Select(demand => demand.Slot.Ngay).Distinct().ToList();
+        var shiftIds = demands.Select(demand => demand.Slot.CaLamViecId).Distinct().ToList();
         var holidays = await context.NgayNghiSet.AsNoTracking()
             .Where(holiday => days.Contains(holiday.Ngay))
             .Select(holiday => holiday.Ngay).ToListAsync(cancellationToken);

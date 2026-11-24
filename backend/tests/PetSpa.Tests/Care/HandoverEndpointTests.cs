@@ -237,6 +237,7 @@ public class HandoverEndpointTests
                 CheckInAt = now.AddHours(-2),
                 CheckInBoiId = receptionist.Id,
                 ReadyAt = secondPetState.Value == PetCareState.READY ? now.AddMinutes(-15) : null,
+                TraLaiAt = secondPetState.Value == PetCareState.CANCELLED ? now.AddMinutes(-10) : null,
                 TrangThaiChamSoc = secondPetState.Value
             };
             db.ChiTietDonSet.Add(chiTiet2);

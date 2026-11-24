@@ -11,10 +11,12 @@
         {{ created.trackingCode }}
       </p>
       <p class="muted">
-        Lưu lại mã và dùng số điện thoại đăng ký để tra cứu. Bản mock không gửi
-        email.
+        Lưu lại mã và dùng số điện thoại đăng ký để tra cứu.
+        <span v-if="IS_MOCK_ENABLED">Bản mock không gửi email.</span>
+        <span v-else-if="created.emailDelivery === 'FAILED'">Đã lưu lịch hẹn nhưng chưa gửi được email. Hãy lưu mã tra cứu này.</span>
       </p>
       <PaymentQrPanel
+        v-if="IS_MOCK_ENABLED"
         :code="created.trackingCode"
         :amount="created.tongTienTamTinh"
       /><RouterLink
@@ -28,6 +30,7 @@
 </template>
 <script setup>
 import { ref } from "vue";
+import { IS_MOCK_ENABLED } from "@/services/api/httpClient";
 import BookingForm from "@/components/booking/BookingForm.vue";
 import PaymentQrPanel from "@/components/booking/PaymentQrPanel.vue";
 const created = ref(null);

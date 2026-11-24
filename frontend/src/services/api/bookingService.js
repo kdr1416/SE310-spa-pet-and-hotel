@@ -2,6 +2,14 @@ import { service, callOperation } from "./operationClient";
 export const bookingService = service(
   [
     "getWorkspace",
+    "getAssignmentCandidates",
+    "listCareTasks",
+    "checkInPet",
+    "performCareAction",
+    "addCareLog",
+    "handoverPet",
+    "getInvoice",
+    "checkoutInvoice",
     "createBooking",
     "lookupBooking",
     "reviewBooking",

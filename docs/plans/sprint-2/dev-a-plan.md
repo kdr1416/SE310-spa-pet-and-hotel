@@ -27,8 +27,10 @@
 
 ## Handoff Issue #26 (2026-11-23)
 
-- **Phase 1 (#26):** `E03` cung cấp dữ liệu ca/availability để hiển thị. `E04` cần `maKhungGio` thật hoặc ánh xạ đã xác minh và truyền cùng ID vào từng `ServiceSelection.maKhungGio`. `shiftId`/`maCa` định danh ca hiển thị. Khi thiếu ánh xạ, adapter trả `MISSING_SLOT_MAPPING` trước HTTP.
-- **Phase 2 (UI Form Integration, chưa gán số Issue):** Handoff contract `E03/E04` từ #15 và `BookingResponse`/`PageBooking` cho luồng UI. Form đặt lịch cần nguồn slot động hoặc ánh xạ đã xác minh. Phân trang UI dùng `trang`, `kichThuocTrang`, `tongSo` từ `E10a`. Phase 1 mặc định lấy trang 1 với `kichThuocTrang=100`.
+**Cập nhật Phase 2 đã duyệt:** Spa thường dùng E64 `/api/booking-options?ngay=...` để lấy `maCa` và `maKhungGio` riêng theo ngày; không suy ID từ nhãn ca. UI giữ pagination `E10a` và trạng thái tường minh (mặc định `PENDING`). `emailDelivery: FAILED` vẫn là đặt lịch thành công, giữ tracking code. Hotel/Combo UI tiếp tục chờ phần #15; không mở scope Spa hiện tại. Xem [plan Phase 2](../../superpowers/plans/2026-11-23-issue-26-phase2-spa-ui.md).
+
+- **Phase 1 (#26):** `E03` cung cấp availability; nhãn ca Phase 1 chỉ là dữ liệu hiển thị của adapter. `E04` cần `maKhungGio` thật hoặc ánh xạ đã xác minh và truyền cùng ID vào từng `ServiceSelection.maKhungGio`. `shiftId`/`maCa` định danh ca hiển thị. Khi thiếu ánh xạ, adapter trả `MISSING_SLOT_MAPPING` trước HTTP.
+- **Phase 2 (Spa đã duyệt; Hotel/Combo nối sau):** Handoff contract `E03/E04` từ #15 và `BookingResponse`/`PageBooking` cho luồng UI. Form Spa lấy slot động từ E64 đã duyệt, không suy ID từ nhãn ca. Phân trang UI dùng `trang`, `kichThuocTrang`, `tongSo` từ `E10a`. Phase 1 mặc định lấy trang 1 với `kichThuocTrang=100`.
 
 Tham chiếu [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
 

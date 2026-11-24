@@ -36,7 +36,7 @@ public sealed class PetEdit : ContractCommand
     }
 }
 
-public sealed class RescheduleRequest : ContractCommand
+public class Reschedule : ContractCommand
 {
     [JsonRequired, Range(1, int.MaxValue)]
     public int MaKhungGio { get; init; }
@@ -45,6 +45,8 @@ public sealed class RescheduleRequest : ContractCommand
     [JsonRequired, Required, StringLength(1000, MinimumLength = 1)]
     public string LyDo { get; init; } = string.Empty;
 }
+
+public sealed class RescheduleRequest : Reschedule {}
 
 public sealed class TrackingCancel : ContractCommand
 {

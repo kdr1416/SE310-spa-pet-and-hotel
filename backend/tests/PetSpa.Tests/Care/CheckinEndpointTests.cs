@@ -612,7 +612,10 @@ public class CheckinEndpointTests
         var second = client.PostAsync("/api/internal/booking-pets/20/check-in", form2, timeout.Token);
         try
         {
-            await CareTestSupport.WaitForLockWaitersAsync(database.ConnectionString, "%INSERT INTO audit_log%", 2, timeout.Token);
+            // Both requests assign the same employee. The first waits at audit insertion;
+            // the second now serializes earlier on the shared scheduling employee key.
+            await CareTestSupport.WaitForLockWaitersAsync(database.ConnectionString, "%INSERT INTO audit_log%", 1, timeout.Token);
+            await CareTestSupport.WaitForLockWaitersAsync(database.ConnectionString, "%pg_advisory_xact_lock%", 1, timeout.Token);
         }
         finally
         {

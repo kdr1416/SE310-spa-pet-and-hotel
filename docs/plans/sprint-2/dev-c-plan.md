@@ -27,8 +27,10 @@
 
 ## Handoff Issue #26 (2026-11-23)
 
+**Cập nhật Phase 2 đã duyệt:** UI Spa lập E23 khi pet READY/DONE trong booking IN_PROGRESS, dùng Invoice canonical `maHoaDon/dongTien/conPhaiTra/qr`. E26 yêu cầu nhập tiền thực nhận/trả lại, không gọi ngầm E23 hoặc E19. Sau PAID, checkbox xác nhận từng pet mới gọi E19; chỉ reload COMPLETED sau pet cuối. QR backend null không được thay bằng QR mock. Hotel/cọc/zero-due UI chờ #23; không thay settlement backend trong #26. Xem [plan Phase 2](../../superpowers/plans/2026-11-23-issue-26-phase2-spa-ui.md).
+
 - **Phase 1 (#26):** Giữ `E23` lập hóa đơn, `E26` thu tiền và `E19` bàn giao là các thao tác riêng. `E26` dùng ID từ hóa đơn thật và từ chối trước HTTP khi thiếu `invoiceId`, phương thức hoặc số tiền thực thu/trả thừa bắt buộc. `E26` chuyển hóa đơn sang `PAID`. `E19` xác nhận thực nhận và bàn giao pet.
-- **Phase 2 (UI Form Integration, chưa gán số Issue):** Handoff `invoiceId` và các trường số tiền từ `E23/E24` (gồm `conPhaiTra` sau khấu trừ cọc) cho form thanh toán. Form tiền mặt thu `soTienThucNhan` và `soTienDaTraLai`. Sau khi hóa đơn `PAID`, UI cho phép thao tác bàn giao riêng qua `E19`.
+- **Phase 2 (Spa đã duyệt; Hotel/Combo nối sau):** Handoff `invoiceId` và các trường số tiền từ `E23/E24` (gồm `conPhaiTra` sau khấu trừ cọc) cho form thanh toán. Form tiền mặt thu `soTienThucNhan` và `soTienDaTraLai`. Sau khi hóa đơn `PAID`, UI cho phép thao tác bàn giao riêng qua `E19`.
 
 Tham chiếu [thiết kế đã duyệt](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md) và [implementation plan Phase 1](../../superpowers/plans/2026-11-23-issue-26-sprint1-hybrid-routing.md).
 
