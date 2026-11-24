@@ -7,6 +7,7 @@ using PetSpa.Core.Common;
 using PetSpa.Core.DTOs.Billing;
 using PetSpa.Core.DTOs.Booking;
 using PetSpa.Core.DTOs.Care;
+using PetSpa.Core.DTOs.Identity;
 using PetSpa.Core.Interfaces.Care;
 
 namespace PetSpa.Api.Controllers.Care;
@@ -24,6 +25,67 @@ public class BookingPetsController(
         PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() }
     };
+
+    [HttpGet("/api/internal/assignment-candidates")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<Employee>>>> AssignmentCandidates(
+        [FromQuery] ShiftQuery query,
+        CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirst("id")?.Value, out var actorId) || actorId <= 0)
+        {
+            return Unauthorized(ApiResponse<IReadOnlyList<Employee>>.Fail(
+                "Phiên đăng nhập không hợp lệ.",
+                "UNAUTHENTICATED",
+                null,
+                HttpContext.TraceIdentifier));
+        }
+
+        var result = await checkinService.GetAssignmentCandidatesAsync(actorId, query, cancellationToken);
+        if (!result.IsSuccess)
+        {
+            return StatusCode(result.StatusCode, ApiResponse<IReadOnlyList<Employee>>.Fail(
+                result.Message,
+                result.ErrorCode ?? "VALIDATION_FAILED",
+                result.Errors,
+                HttpContext.TraceIdentifier));
+        }
+
+        return Ok(ApiResponse<IReadOnlyList<Employee>>.Ok(result.Data!, result.Message));
+    }
+
+    [HttpPut("{id:int}/assignment")]
+    public async Task<ActionResult<ApiResponse<BookingPet>>> Reassign(
+        [FromRoute] int id,
+        [FromBody] AssignmentRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirst("id")?.Value, out var actorId) || actorId <= 0)
+        {
+            return Unauthorized(ApiResponse<BookingPet>.Fail(
+                "Phiên đăng nhập không hợp lệ.",
+                "UNAUTHENTICATED",
+                null,
+                HttpContext.TraceIdentifier));
+        }
+
+        var result = await checkinService.ReassignAsync(
+            id,
+            actorId,
+            request,
+            HttpContext.TraceIdentifier,
+            cancellationToken);
+
+        if (!result.IsSuccess)
+        {
+            return StatusCode(result.StatusCode, ApiResponse<BookingPet>.Fail(
+                result.Message,
+                result.ErrorCode ?? "VALIDATION_FAILED",
+                result.Errors,
+                HttpContext.TraceIdentifier));
+        }
+
+        return Ok(ApiResponse<BookingPet>.Ok(result.Data!, result.Message));
+    }
 
     [HttpPost("{id:int}/check-in")]
     [Consumes("multipart/form-data")]

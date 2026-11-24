@@ -1,5 +1,7 @@
 # Phạm vi và quyết định nghiệp vụ — baseline đã chốt
 
+**Amendment Phase 2 Spa UI, duyệt 2026-11-23:** giữ nguyên D/Q/M2 và schema; bổ sung E64 Public read ca/slot, đưa E38/E62 lên Sprint2 để khép luồng Spa. API contract mục7 ghi71operations hiện hành (15/32/24), đối chiếu drift tổng68 cũ đã bỏ sót E62/E63 trong registry. Hotel/Combo UI vẫn follow-up. Spec `docs/superpowers/specs/2026-11-23-issue-26-phase2-spa-ui-design.md` được người dùng duyệt, cho phép implementation theo executing-plans; không đổi nghiệp vụ thu tiền/bàn giao/assignment.
+
 **M2: APPROVED / BASELINE LOCKED — 03/11/2026.** Nhóm trưởng xác nhận “mình chốt 6 file .md đều ổn cả rồi”. M2-15 ghi nhận phê duyệt trọn gói tài liệu, không phải kết quả chạy code/tests hoặc lệnh triển khai.
 
 **Ưu tiên M2 (03/11/2026):** mục 6 ghi các quyết định mới được người dùng duyệt. Nội dung D/Q/T cũ trái với mục 6 chỉ giữ để truy vết, không dùng sinh code. SRS v3.0 và bổ sung M2 thay baseline SRS 1.1.

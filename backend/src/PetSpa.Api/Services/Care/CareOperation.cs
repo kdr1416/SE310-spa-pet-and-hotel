@@ -42,7 +42,10 @@ public sealed class CareOperation(
 
     private const string TargetType = "ChiTietDon";
     internal const long MaxPhotoBytes = 5 * 1024 * 1024;
-    private static readonly TimeZoneInfo ClinicTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
+    internal static readonly TimeZoneInfo ClinicTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
+
+    internal static DateOnly HcmDate(DateTimeOffset instant) =>
+        DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(instant, ClinicTimeZone).DateTime);
 
     internal async Task<CareResult<T>> ExecuteAsync<T>(
         CareCommand command,

@@ -65,7 +65,18 @@ public class SpaFlowTests
         Assert.Equal(60, bath.ThoiLuongPhut);
         Assert.Equal(150_000m, Assert.Single(bath.BangGia, price => price.MaSize == "S").DonGia);
         Assert.Equal(250_000m, Assert.Single(bath.BangGia, price => price.MaSize == "L").DonGia);
-        var (morning, afternoon) = await ReadSlotIdsAsync(database);
+        var options = await ReadAsync<BookingOptions>(await customer.GetAsync($"/api/booking-options?ngay={ClinicDate:yyyy-MM-dd}")); // E64
+        Assert.Equal(ClinicDate, options.Ngay);
+        var morningShift = options.Ca.First();
+        var morning = morningShift.MaKhungGio!.Value;
+        var afternoon = options.Ca.Last().MaKhungGio!.Value;
+        Assert.All(options.Ca, shift => Assert.True(shift.MoNhanKhach));
+        var candidates = await ReadAsync<List<Employee>>(await reception.GetAsync(
+            $"/api/internal/assignment-candidates?ngay={ClinicDate:yyyy-MM-dd}&maCa={morningShift.MaCa}")); // E14
+        Assert.Contains(candidates, employee => employee.MaNhanVien == assignee.MaNhanVien);
+        var fur = await ReadAsync<List<FurConditionItem>>(await reception.GetAsync("/api/internal/fur-conditions")); // E62
+        Assert.NotEmpty(fur);
+        Assert.All(fur, item => Assert.True(item.DangHoatDong));
         var pets = new List<PetSelection>
         {
             Pet("Milo", 4m, morning, bath.MaDichVu),
@@ -119,6 +130,10 @@ public class SpaFlowTests
         Assert.Equal("IN_PROGRESS", (await TrackAsync(customer, pair)).TrangThai);
         var secondCheckin = await CheckInAsync(reception, nau, assignee.MaNhanVien, 16m);
         AssertCheckin(secondCheckin, 16m, "L", "L", 250_000m);
+        var tasks = await ReadAsync<PageBookingPet>(await technician.GetAsync("/api/internal/care-tasks?trang=1&kichThuocTrang=20")); // E38
+        Assert.Equal(2, tasks.TongSo);
+        Assert.Equal(new[] { milo, nau }.Order(), tasks.Items.Select(pet => pet.MaChiTietDon).Order());
+        Assert.All(tasks.Items, pet => Assert.Equal("WAITING", pet.TrangThai));
 
         foreach (var petId in new[] { milo, nau })
         {

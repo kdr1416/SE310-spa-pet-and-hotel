@@ -60,8 +60,16 @@ export async function transaction(operation, { commitError = false } = {}) {
     tx.onerror = () => {};
   });
 }
-export function mockCall(action, payload, actorId = null) {
-  return transaction((s) => execute(s, action, payload, actorId), {
+export function mockCall(action, payload, actorId = null, { expectedRole } = {}) {
+  return transaction((s) => {
+    if (expectedRole !== undefined) {
+      const actor = s.users.find((user) => user.id === actorId);
+      if (actor?.isActive !== true || actor.vaiTro !== expectedRole) {
+        throw new Error("Tài khoản demo không phù hợp với phiên đăng nhập.");
+      }
+    }
+    return execute(s, action, payload, actorId);
+  }, {
     commitError: action === "lookupBooking",
   });
 }

@@ -20,6 +20,15 @@ public sealed class BookingManagementController(BookingManagementService booking
         return Respond(await bookings.ListAsync(query, actorId, cancellationToken));
     }
 
+    [HttpGet("{id:int}")]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> GetById(
+        int id, CancellationToken cancellationToken)
+    {
+        if (!TryActorId(out var actorId))
+            return Respond(ApiResponse<BookingResponse>.Fail("Phiên đăng nhập không hợp lệ.", "UNAUTHENTICATED"));
+        return Respond(await bookings.GetByIdAsync(id, actorId, cancellationToken));
+    }
+
     [HttpPost("{id:int}/confirm")]
     public async Task<ActionResult<ApiResponse<BookingResponse>>> Confirm(
         int id, BookingCommand request, CancellationToken cancellationToken)
@@ -38,6 +47,15 @@ public sealed class BookingManagementController(BookingManagementService booking
         return Respond(await bookings.CancelAsync(id, request, actorId, HttpContext.TraceIdentifier, cancellationToken));
     }
 
+    [HttpPost("{id:int}/reschedule")]
+    public async Task<ActionResult<ApiResponse<BookingResponse>>> Reschedule(
+        int id, Reschedule request, CancellationToken cancellationToken)
+    {
+        if (!TryActorId(out var actorId))
+            return Respond(ApiResponse<BookingResponse>.Fail("Phiên đăng nhập không hợp lệ.", "UNAUTHENTICATED"));
+        return Respond(await bookings.RescheduleAsync(id, request, actorId, HttpContext.TraceIdentifier, cancellationToken));
+    }
+
     private bool TryActorId(out int actorId) =>
         int.TryParse(User.FindFirst("id")?.Value, out actorId) && actorId > 0;
 
@@ -52,7 +70,7 @@ public sealed class BookingManagementController(BookingManagementService booking
             "UNAUTHENTICATED" => Unauthorized(response),
             "FORBIDDEN" => StatusCode(StatusCodes.Status403Forbidden, response),
             "NOT_FOUND" => NotFound(response),
-            "INVALID_TRANSITION" or "IDEMPOTENCY_CONFLICT" => Conflict(response),
+            "INVALID_TRANSITION" or "IDEMPOTENCY_CONFLICT" or "CAPACITY_EXCEEDED" => Conflict(response),
             "TEMPORARY_FAILURE" => StatusCode(StatusCodes.Status503ServiceUnavailable, response),
             _ => BadRequest(response)
         };

@@ -5,12 +5,14 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
 using PetSpa.Api.Data;
+using PetSpa.Api.Services.Billing;
 using PetSpa.Api.Services.Storage;
 using PetSpa.Core.DTOs.Booking;
 using PetSpa.Core.Entities.Billing;
 using PetSpa.Core.Entities.Booking;
 using PetSpa.Core.Entities.Scheduling;
 using PetSpa.Core.Enums;
+using PetSpa.Core.Interfaces.Billing;
 
 namespace PetSpa.Api.Services.Booking;
 
@@ -20,6 +22,9 @@ public sealed record BookingCreateResult(
 public sealed class BookingCreateService(
     PetSpaDbContext db,
     SpaCapacityCalculator capacity,
+    HotelCapacityCalculator hotelCapacity,
+    IDepositExpiryService depositExpiry,
+    TimeProvider clock,
     BookingProofService proofs,
     IFileStorageService storage,
     IEmailSender email,
@@ -32,13 +37,21 @@ public sealed class BookingCreateService(
     private static readonly TimeZoneInfo BusinessTimeZone = TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh");
 
     public async Task<BookingCreateResult> CreateAsync(
-        BookingCreate request, IFormFileCollection files, CancellationToken cancellationToken)
+        BookingCreate request, IFormFileCollection files, int? actorId, CancellationToken cancellationToken)
     {
-        if (!IsValid(request))
+        var isInternal = actorId.HasValue;
+        if (!IsValid(request, isInternal))
             return Invalid();
 
         if (files.Count > 10 || files.Any(file => file.Length > MaximumPhotoBytes))
             return Failure("FILE_TOO_LARGE", "Chỉ tải tối đa 10 ảnh, mỗi ảnh không quá 5 MiB.");
+
+        if (isInternal)
+        {
+            var role = await GetRoleAsync(actorId!.Value, cancellationToken);
+            if (role is null)
+                return Failure("FORBIDDEN", "Nhân viên không có quyền tạo đơn đặt lịch tại quầy.");
+        }
 
         var uploaded = new Dictionary<string, string>(StringComparer.Ordinal);
         var preserveUploads = false;
@@ -55,9 +68,8 @@ public sealed class BookingCreateService(
                 || !references.ToHashSet(StringComparer.Ordinal).SetEquals(files.Select(file => file.Name)))
                 return Invalid("Mỗi ảnh đính kèm phải khớp đúng một vaccinationFileKey.");
 
-            if (await proofs.ResolveAsync(request, lockChallenges: false, cancellationToken) is null)
+            if (await proofs.ResolveAsync(request, lockChallenges: false, cancellationToken, isInternal) is null)
             {
-                // A concurrent writer can consume the proof after our first replay lookup.
                 return await FindReplayWithKeyLockAsync(request.RequestId, fingerprint, cancellationToken) ?? InvalidProof();
             }
 
@@ -72,50 +84,135 @@ public sealed class BookingCreateService(
             }
             catch (FileStorageException exception)
             {
-                // A duplicate upload can fail while the original request commits.
                 return await FindReplayWithKeyLockAsync(request.RequestId, fingerprint, cancellationToken)
                     ?? Failure(exception.ErrorCode, exception.Message);
             }
 
+            var lines = request.ThuCung.SelectMany((pet, index) =>
+                pet.DichVu.Select(service => new RequestedService(index, service.MaDichVu, service.MaCombo, service.MaKhungGio)))
+                .ToArray();
+            var slotIds = lines.Select(line => line.SlotId).Append(request.MaKhungGio).Distinct().Order().ToArray();
+            var roomTypeIds = request.ThuCung.Where(pet => pet.MaLoaiPhong.HasValue)
+                .Select(pet => pet.MaLoaiPhong!.Value).Distinct().Order().ToArray();
+
+            // Expire overdue deposits in a separate transaction BEFORE opening the main booking transaction
+            var now = clock.GetUtcNow();
+            await depositExpiry.ExpireOverdueDepositsAsync(
+                now, null, cancellationToken, targetKhungGioIds: slotIds, targetRoomTypeIds: roomTypeIds);
+
             BookingResponse response;
-            await using (var transaction = await db.Database.BeginTransactionAsync(cancellationToken))
+            await using (var transaction = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(cancellationToken) : null)
             {
-                await LockRequestKeyAsync(request.RequestId, cancellationToken);
+                if (db.Database.IsRelational())
+                    await LockRequestKeyAsync(request.RequestId, cancellationToken);
+
                 replay = await FindReplayAsync(request.RequestId, fingerprint, cancellationToken);
                 if (replay is not null)
                     return replay;
 
-                var proof = await proofs.ResolveAsync(request, lockChallenges: true, cancellationToken);
+                var proof = await proofs.ResolveAsync(request, lockChallenges: db.Database.IsRelational(), cancellationToken, isInternal);
                 if (proof is null)
                     return InvalidProof();
 
-                var lines = request.ThuCung.SelectMany((pet, index) =>
-                    pet.DichVu.Select(service => new RequestedService(index, service.MaDichVu!.Value, service.MaKhungGio)))
-                    .ToArray();
-                var slotIds = lines.Select(line => line.SlotId).Append(request.MaKhungGio).Distinct().Order().ToArray();
-                await LockSlotsAndStaffAsync(slotIds, cancellationToken);
+                if (db.Database.IsRelational())
+                {
+                    await LockSlotsAndStaffAsync(slotIds, cancellationToken);
+                    if (roomTypeIds.Length > 0)
+                        await hotelCapacity.LockRoomTypesAsync(roomTypeIds, cancellationToken);
+                }
+
+                var slotIdList = slotIds.ToList();
                 var slots = await db.KhungGioDatLichSet.Include(slot => slot.CaLamViec)
-                    .Where(slot => slotIds.Contains(slot.Id)).ToDictionaryAsync(slot => slot.Id, cancellationToken);
+                    .Where(slot => slotIdList.Contains(slot.Id)).ToDictionaryAsync(slot => slot.Id, cancellationToken);
                 if (!slots.TryGetValue(request.MaKhungGio, out var intake))
                     return Failure("NOT_FOUND", "Không tìm thấy khung giờ đặt lịch.");
-                if (slots.Count != slotIds.Length || request.NgayTra != intake.Ngay
-                    || slots.Values.Any(slot => slot.Ngay != intake.Ngay || slot.CaLamViec.GioBatDau < intake.CaLamViec.GioBatDau))
-                    return Invalid("Ca thực hiện phải từ ca tiếp nhận trở đi, trong cùng ngày.");
 
-                var services = await LoadServicesAsync(lines.Select(line => line.ServiceId).Distinct().ToArray(), cancellationToken);
+                if (slots.Count != slotIds.Length)
+                    return Invalid("Khung giờ dịch vụ không tồn tại.");
+
+                var hasHotel = request.ThuCung.Any(pet => pet.MaLoaiPhong.HasValue);
+                if (hasHotel)
+                {
+                    if (request.NgayTra <= intake.Ngay)
+                    {
+                        return request.NgayTra < intake.Ngay
+                            ? Failure("INVALID_DATE_RANGE", "Ngày trả phòng phải sau ngày nhận phòng.")
+                            : Invalid("Đặt phòng Hotel phải có ngày trả sau ngày nhận.");
+                    }
+
+                    if (slots.Values.Any(slot => slot.Ngay < intake.Ngay || slot.Ngay > request.NgayTra
+                        || (slot.Ngay == intake.Ngay && slot.CaLamViec.GioBatDau < intake.CaLamViec.GioBatDau)))
+                    {
+                        return Invalid("Ca thực hiện phải nằm trong khoảng thời gian lưu trú và từ ca tiếp nhận trở đi.");
+                    }
+
+                    var holidayDates = await db.NgayNghiSet.AsNoTracking()
+                        .Where(h => h.Ngay == intake.Ngay || h.Ngay == request.NgayTra)
+                        .Select(h => h.Ngay).ToListAsync(cancellationToken);
+                    if (holidayDates.Contains(intake.Ngay) || holidayDates.Contains(request.NgayTra))
+                    {
+                        return Failure("CAPACITY_EXCEEDED", "Ngày tiếp nhận hoặc ngày trả phòng rơi vào ngày nghỉ.");
+                    }
+                }
+                else
+                {
+                    if (request.NgayTra != intake.Ngay
+                        || slots.Values.Any(slot => slot.Ngay != intake.Ngay || slot.CaLamViec.GioBatDau < intake.CaLamViec.GioBatDau))
+                    {
+                        return Invalid("Ca thực hiện phải từ ca tiếp nhận trở đi, trong cùng ngày.");
+                    }
+                }
+
+                var singleServiceIds = lines.Where(l => l.ServiceId.HasValue).Select(l => l.ServiceId!.Value).Distinct().ToArray();
+                var services = await LoadServicesAsync(singleServiceIds, cancellationToken);
                 if (services is null)
                     return Invalid("Dịch vụ không tồn tại hoặc không thể đặt riêng.");
                 if (services.Any(service => service.Value.Prices.Count != 4))
                     return TemporaryFailure();
 
-                var demands = lines.GroupBy(line => line.SlotId).ToDictionary(group => group.Key, group => new SpaSlotDemand(
-                    slots[group.Key], group.Select(line => line.PetIndex).Distinct().Count(),
-                    group.Sum(line => (long)services[line.ServiceId].Duration)));
+                var comboIds = lines.Where(l => l.ComboId.HasValue).Select(l => l.ComboId!.Value).Distinct().ToArray();
+                var combos = await LoadCombosAsync(comboIds, cancellationToken);
+                if (combos is null)
+                    return Invalid("Combo không tồn tại hoặc đã ngừng hoạt động.");
+                if (combos.Any(combo => combo.Value.Prices.Count != 4))
+                    return TemporaryFailure();
+
+                var roomTypes = await LoadRoomsAsync(roomTypeIds, cancellationToken);
+                if (roomTypes is null)
+                    return Invalid("Loại phòng không tồn tại hoặc đã ngừng hoạt động.");
+
+                // Demands for Spa capacity
+                var demands = lines.GroupBy(line => line.SlotId).ToDictionary(
+                    group => group.Key,
+                    group => new SpaSlotDemand(
+                        slots[group.Key],
+                        group.Select(line => line.PetIndex).Distinct().Count(),
+                        group.Sum(line => line.ServiceId.HasValue
+                            ? (long)services[line.ServiceId.Value].Duration
+                            : (long)combos[line.ComboId!.Value].Duration)));
                 demands.TryAdd(intake.Id, new SpaSlotDemand(intake, 0, 0));
+
                 var availability = await capacity.CheckAsync(demands.Values, cancellationToken);
                 var capacityError = availability.Values.FirstOrDefault(slot => slot.CapacityError is not null)?.CapacityError;
                 if (capacityError is not null)
                     return Failure("CAPACITY_EXCEEDED", capacityError);
+
+                if (hasHotel)
+                {
+                    var roomAvailabilities = await hotelCapacity.CheckRoomAvailabilityAsync(
+                        intake.Ngay, request.NgayTra, roomTypeIds, excludeBookingId: null, now: now, ct: cancellationToken);
+
+                    foreach (var roomId in roomTypeIds)
+                    {
+                        var needed = request.ThuCung.Count(p => p.MaLoaiPhong == roomId);
+                        for (var day = intake.Ngay; day < request.NgayTra; day = day.AddDays(1))
+                        {
+                            var avail = roomAvailabilities.FirstOrDefault(r => r.MaLoaiPhong == roomId && r.Ngay == day);
+                            if (avail is null || avail.SuatConLai < needed)
+                                return Failure("CAPACITY_EXCEEDED", "Không đủ công suất phòng đã chọn.");
+                        }
+                    }
+                }
 
                 var weights = await db.HeSoCanNangSet.AsNoTracking().ToListAsync(cancellationToken);
                 var sizes = request.ThuCung.Select(pet => weights.Find(band =>
@@ -124,17 +221,38 @@ public sealed class BookingCreateService(
                 if (sizes.Any(size => size is null))
                     return TemporaryFailure();
 
-                var total = lines.Sum(line => services[line.ServiceId].Prices[sizes[line.PetIndex]!.MaSize]);
+                var totalServices = lines.Sum(line => line.ServiceId.HasValue
+                    ? services[line.ServiceId.Value].Prices[sizes[line.PetIndex]!.MaSize]
+                    : combos[line.ComboId!.Value].Prices[sizes[line.PetIndex]!.MaSize]);
+
+                var soDemChot = (int)(request.NgayTra.DayNumber - intake.Ngay.DayNumber);
+                var totalRooms = request.ThuCung
+                    .Where(pet => pet.MaLoaiPhong.HasValue)
+                    .Sum(pet => roomTypes[pet.MaLoaiPhong!.Value].GiaMoiDem * soDemChot);
+
+                var total = totalServices + totalRooms;
                 if (total > 99_999_999_999_999m)
                     return Invalid("Tổng giá trị đơn đặt lịch vượt quá giới hạn.");
 
-                var booking = BuildBooking(request, fingerprint, proof, intake, slots.Values, services, total);
+                // Check deposit configuration
+                var settingRow = await db.CauHinhHeThongSet.AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Khoa == "EXTENSION_SETTINGS", cancellationToken);
+                var requireDeposit = false;
+                if (settingRow is not null && !string.IsNullOrWhiteSpace(settingRow.GiaTri))
+                {
+                    using var doc = JsonDocument.Parse(settingRow.GiaTri);
+                    var cocHotel = doc.RootElement.TryGetProperty("cocHotel", out var ch) && ch.GetBoolean();
+                    var giuCho = doc.RootElement.TryGetProperty("giuCho", out var gc) && gc.GetBoolean();
+                    requireDeposit = cocHotel && giuCho;
+                }
+
+                var booking = BuildBooking(request, fingerprint, proof, intake, slots.Values, services, combos, roomTypes, sizes, total, actorId, now, hasHotel && requireDeposit);
                 db.DonDatLichSet.Add(booking);
                 foreach (var demand in demands.Values.Where(demand => demand.Pets > 0))
                 {
                     demand.Slot.SlotDaDat += demand.Pets;
                     demand.Slot.PhutDaGiu += (int)demand.Minutes;
-                    demand.Slot.UpdatedAt = DateTimeOffset.UtcNow;
+                    demand.Slot.UpdatedAt = now;
                 }
 
                 if (!await SaveWithUniqueTrackingCodeAsync(booking, cancellationToken))
@@ -145,7 +263,9 @@ public sealed class BookingCreateService(
                 {
                     var selection = request.ThuCung[index];
                     var objectPath = selection.VaccinationFileKey is { } key ? uploaded[key] : null;
-                    var vaccinationRequired = selection.DichVu.Any(service => services[service.MaDichVu!.Value].VaccinationRequired);
+                    var vaccinationRequired = selection.DichVu.Any(service => service.MaDichVu.HasValue
+                        ? services[service.MaDichVu.Value].VaccinationRequired
+                        : combos[service.MaCombo!.Value].VaccinationRequired);
                     return new PetPolicy(pet.Id, selection.LoaiLong, selection.GhiChuDiUng, vaccinationRequired, objectPath, sizes[index]!.MaSize.ToString());
                 }).ToArray();
                 booking.ChinhSachSnapshot = JsonSerializer.Serialize(new BookingPolicy(request.GhiChu, petPolicies, response), JsonOptions);
@@ -153,16 +273,15 @@ public sealed class BookingCreateService(
 
                 if (proof.ChallengeIds.Length > 0)
                 {
-                    var usedAt = DateTimeOffset.UtcNow;
-                    await db.OtpChallengeSet.Where(challenge => proof.ChallengeIds.Contains(challenge.Id))
-                        .ExecuteUpdateAsync(update => update.SetProperty(challenge => challenge.SuDungAt, usedAt)
-                            .SetProperty(challenge => challenge.UpdatedAt, usedAt), cancellationToken);
+                    var challengeIdList = proof.ChallengeIds.ToList();
+                    await db.OtpChallengeSet.Where(challenge => challengeIdList.Contains(challenge.Id))
+                        .ExecuteUpdateAsync(update => update.SetProperty(challenge => challenge.SuDungAt, now)
+                            .SetProperty(challenge => challenge.UpdatedAt, now), cancellationToken);
                 }
 
-                // From here a connection failure may conceal a successful commit. Keep evidence private
-                // until its absence can be established instead of deleting a potentially committed reference.
                 preserveUploads = true;
-                await transaction.CommitAsync(CancellationToken.None);
+                if (transaction is not null)
+                    await transaction.CommitAsync(CancellationToken.None);
             }
 
             return new BookingCreateResult(response with { EmailDelivery = await DeliverEmailAsync(response) });
@@ -189,8 +308,9 @@ public sealed class BookingCreateService(
     private async Task<BookingCreateResult?> FindReplayWithKeyLockAsync(
         Guid requestId, string fingerprint, CancellationToken cancellationToken)
     {
-        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
-        await LockRequestKeyAsync(requestId, cancellationToken);
+        await using var transaction = db.Database.IsRelational() ? await db.Database.BeginTransactionAsync(cancellationToken) : null;
+        if (db.Database.IsRelational())
+            await LockRequestKeyAsync(requestId, cancellationToken);
         return await FindReplayAsync(requestId, fingerprint, cancellationToken);
     }
 
@@ -208,39 +328,27 @@ public sealed class BookingCreateService(
             && created.Deserialize<BookingResponse>(JsonOptions) is { } response)
             return new BookingCreateResult(response with { EmailDelivery = booking.EmailDelivery ?? "FAILED" }, Replayed: true);
 
-        var legacy = await db.DonDatLichSet.AsNoTracking()
-            .Include(row => row.ChiTietDonDonDatLichItems)
-            .ThenInclude(pet => pet.DichVuTrongDonChiTietDonItems)
-            .ThenInclude(service => service.ThanhPhanDichVuTrongDonDichVuTrongDonItems)
+        var legacy = await BookingProjection.IncludeDetails(db.DonDatLichSet).AsNoTracking()
             .SingleAsync(row => row.Id == booking.Id, cancellationToken);
         return new BookingCreateResult(BookingProjection.Project(legacy), Replayed: true);
     }
 
-    private async Task LockSlotsAndStaffAsync(int[] slotIds, CancellationToken cancellationToken)
-    {
-        await db.Database.ExecuteSqlInterpolatedAsync(
-            $"SELECT id FROM khung_gio_dat_lich WHERE id = ANY({slotIds}) ORDER BY id FOR UPDATE", cancellationToken);
-        await db.Database.ExecuteSqlInterpolatedAsync($"""
-            SELECT registration.id FROM dang_ky_ca registration
-            WHERE EXISTS (
-                SELECT 1 FROM khung_gio_dat_lich slot WHERE slot.id = ANY({slotIds})
-                    AND slot.ngay = registration.ngay AND slot.ca_lam_viec_id = registration.ca_lam_viec_id
-            )
-            ORDER BY registration.id FOR UPDATE
-            """, cancellationToken);
-    }
-
     private Task LockRequestKeyAsync(Guid requestId, CancellationToken cancellationToken)
     {
-        // Serialize only this request key across instances, before acquiring any resource locks.
-        var requestLock = BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(requestId.ToByteArray()));
-        return db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({requestLock})", cancellationToken);
+        var key = BinaryPrimitives.ReadInt64BigEndian(SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes($"booking-create:{requestId:N}")));
+        return db.Database.ExecuteSqlInterpolatedAsync($"SELECT pg_advisory_xact_lock({key})", cancellationToken);
     }
+
+    private Task LockSlotsAndStaffAsync(int[] slotIds, CancellationToken cancellationToken) =>
+        db.Database.ExecuteSqlInterpolatedAsync(
+            $"SELECT id FROM khung_gio_dat_lich WHERE id = ANY({slotIds}) ORDER BY id FOR UPDATE", cancellationToken);
 
     private async Task<Dictionary<int, ServiceSnapshot>?> LoadServicesAsync(int[] ids, CancellationToken cancellationToken)
     {
+        var idList = ids.ToList();
         var services = await db.DichVuSet.AsNoTracking()
-            .Where(service => ids.Contains(service.Id) && service.IsActive
+            .Where(service => idList.Contains(service.Id) && service.IsActive
                 && service.LoaiDichVu != "SPA_ADVANCED" && service.TenDichVu != "Cắt tỉa tạo kiểu"
                 && service.ThoiLuongPhut > 0)
             .Include(service => service.BangGiaSizeDichVuItems).ThenInclude(price => price.KhoangSize)
@@ -252,11 +360,61 @@ public sealed class BookingCreateService(
             service.BangGiaSizeDichVuItems.ToDictionary(price => price.KhoangSize.MaSize, price => price.DonGia)));
     }
 
+    private async Task<Dictionary<int, ComboSnapshot>?> LoadCombosAsync(int[] ids, CancellationToken cancellationToken)
+    {
+        var idList = ids.ToList();
+        var combos = await db.ComboSet.AsNoTracking()
+            .Where(combo => idList.Contains(combo.Id) && combo.IsActive)
+            .Include(combo => combo.ChiTietComboComboItems).ThenInclude(ct => ct.DichVu)
+                .ThenInclude(d => d.BangGiaSizeDichVuItems).ThenInclude(p => p.KhoangSize)
+            .Include(combo => combo.BangGiaSizeComboItems).ThenInclude(price => price.KhoangSize)
+            .ToListAsync(cancellationToken);
+        if (combos.Count != ids.Length)
+            return null;
+        return combos.ToDictionary(combo => combo.Id, combo => new ComboSnapshot(
+            combo.TenCombo,
+            combo.ChiTietComboComboItems.Where(ct => ct.DichVu.IsActive).Sum(ct => ct.DichVu.ThoiLuongPhut),
+            combo.ChiTietComboComboItems.Any(ct => ct.DichVu.YeuCauTiemChung),
+            combo.BangGiaSizeComboItems.ToDictionary(price => price.KhoangSize.MaSize, price => price.DonGia),
+            combo.ChiTietComboComboItems.Where(ct => ct.DichVu.IsActive).Select(ct => new ComponentSnapshot(
+                ct.DichVu.Id,
+                ct.DichVu.TenDichVu,
+                ct.DichVu.ThoiLuongPhut,
+                ct.DichVu.BangGiaSizeDichVuItems.ToDictionary(price => price.KhoangSize.MaSize, price => price.DonGia)
+            )).ToList()
+        ));
+    }
+
+    private async Task<Dictionary<int, RoomTypeSnapshot>?> LoadRoomsAsync(int[] ids, CancellationToken cancellationToken)
+    {
+        var idList = ids.ToList();
+        var rooms = await db.LoaiPhongSet.AsNoTracking()
+            .Where(room => idList.Contains(room.Id) && room.IsActive)
+            .ToListAsync(cancellationToken);
+        if (rooms.Count != ids.Length)
+            return null;
+        return rooms.ToDictionary(r => r.Id, r => new RoomTypeSnapshot(r.Id, r.TenPhong, r.GiaMoiDem, r.SoLuongPhong));
+    }
+
     private static DonDatLich BuildBooking(
-        BookingCreate request, string fingerprint, BookingProofScope proof, KhungGioDatLich intake,
-        IEnumerable<KhungGioDatLich> slots, Dictionary<int, ServiceSnapshot> services, decimal total)
+        BookingCreate request,
+        string fingerprint,
+        BookingProofScope proof,
+        KhungGioDatLich intake,
+        IEnumerable<KhungGioDatLich> slots,
+        Dictionary<int, ServiceSnapshot> services,
+        Dictionary<int, ComboSnapshot> combos,
+        Dictionary<int, RoomTypeSnapshot> roomTypes,
+        HeSoCanNang?[] sizes,
+        decimal total,
+        int? actorId,
+        DateTimeOffset now,
+        bool createDeposit)
     {
         var contact = request.LienHe;
+        var hasHotel = request.ThuCung.Any(p => p.MaLoaiPhong.HasValue);
+        var soDemChot = (int)(request.NgayTra.DayNumber - intake.Ngay.DayNumber);
+
         var booking = new DonDatLich
         {
             RequestId = request.RequestId,
@@ -267,23 +425,40 @@ public sealed class BookingCreateService(
             EmailSnapshot = contact.Email,
             KhungGioId = intake.Id,
             BatDauDuKien = BusinessInstant(intake.Ngay, intake.CaLamViec.GioBatDau),
-            KetThucDuKien = BusinessInstant(intake.Ngay, slots.Max(slot => slot.CaLamViec.GioKetThuc)),
+            KetThucDuKien = hasHotel
+                ? BusinessInstant(request.NgayTra, intake.CaLamViec.GioKetThuc)
+                : BusinessInstant(intake.Ngay, slots.Max(slot => slot.CaLamViec.GioKetThuc)),
             MocCuoiCa = BusinessInstant(intake.Ngay, intake.CaLamViec.GioKetThuc),
-            TongTamTinh = total
+            TongTamTinh = total,
+            TaoBoiId = actorId,
+            CreatedAt = now,
+            UpdatedAt = now
         };
+
         if (proof.CustomerId is { } id)
             booking.KhachHangId = id;
         else
             booking.KhachHang = new KhachHang { HoTen = contact.HoTen, SoDienThoai = contact.SoDienThoai, Email = contact.Email };
 
-        foreach (var selection in request.ThuCung)
+        for (var index = 0; index < request.ThuCung.Count; index++)
         {
+            var selection = request.ThuCung[index];
             var pet = new ChiTietDon
             {
                 CanNangKhaiBao = selection.CanNangKhaiBao,
                 TrangThaiChamSoc = PetCareState.NOT_ARRIVED,
-                HoSoTiemChungId = selection.MaHoSoTiemChung
+                HoSoTiemChungId = selection.MaHoSoTiemChung,
+                CreatedAt = now,
+                UpdatedAt = now
             };
+
+            if (selection.MaLoaiPhong is { } roomId)
+            {
+                pet.LoaiPhongId = roomId;
+                pet.GiaPhongCamKet = roomTypes[roomId].GiaMoiDem;
+                pet.SoDemChot = soDemChot;
+            }
+
             if (selection.MaThuCung is { } petId)
             {
                 pet.ThuCungId = petId;
@@ -298,7 +473,9 @@ public sealed class BookingCreateService(
                     CanNang = selection.CanNangKhaiBao,
                     Giong = selection.Giong,
                     LoaiLong = selection.LoaiLong,
-                    GhiChuDiUng = selection.GhiChuDiUng
+                    GhiChuDiUng = selection.GhiChuDiUng,
+                    CreatedAt = now,
+                    UpdatedAt = now
                 };
                 if (proof.CustomerId is { } ownerId)
                     pet.ThuCung.KhachHangId = ownerId;
@@ -309,21 +486,71 @@ public sealed class BookingCreateService(
 
             foreach (var selectionService in selection.DichVu)
             {
-                var serviceId = selectionService.MaDichVu!.Value;
-                var service = services[serviceId];
-                pet.DichVuTrongDonChiTietDonItems.Add(new DichVuTrongDon
+                if (selectionService.MaDichVu is { } serviceId)
                 {
-                    RequestId = Guid.NewGuid(),
-                    DichVuId = serviceId,
-                    KhungGioId = selectionService.MaKhungGio,
-                    TenSnapshot = service.Name,
-                    BangGiaSizeSnapshot = JsonSerializer.Serialize(service.Prices, JsonOptions),
-                    ThoiLuongSnapshot = service.Duration,
-                    TrangThai = OrderServiceState.CHO_THUC_HIEN
-                });
+                    var service = services[serviceId];
+                    pet.DichVuTrongDonChiTietDonItems.Add(new DichVuTrongDon
+                    {
+                        RequestId = Guid.NewGuid(),
+                        DichVuId = serviceId,
+                        KhungGioId = selectionService.MaKhungGio,
+                        TenSnapshot = service.Name,
+                        BangGiaSizeSnapshot = JsonSerializer.Serialize(service.Prices, JsonOptions),
+                        ThoiLuongSnapshot = service.Duration,
+                        TrangThai = OrderServiceState.CHO_THUC_HIEN,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    });
+                }
+                else if (selectionService.MaCombo is { } comboId)
+                {
+                    var combo = combos[comboId];
+                    var comboOrder = new DichVuTrongDon
+                    {
+                        RequestId = Guid.NewGuid(),
+                        ComboId = comboId,
+                        KhungGioId = selectionService.MaKhungGio,
+                        TenSnapshot = combo.Name,
+                        BangGiaSizeSnapshot = JsonSerializer.Serialize(combo.Prices, JsonOptions),
+                        ThoiLuongSnapshot = combo.Duration,
+                        TrangThai = OrderServiceState.CHO_THUC_HIEN,
+                        CreatedAt = now,
+                        UpdatedAt = now
+                    };
+                    foreach (var component in combo.Components)
+                    {
+                        comboOrder.ThanhPhanDichVuTrongDonDichVuTrongDonItems.Add(new ThanhPhanDichVuTrongDon
+                        {
+                            DichVuId = component.Id,
+                            TenSnapshot = component.Name,
+                            ThoiLuongSnapshot = component.Duration,
+                            GiaLeSizeSnapshot = JsonSerializer.Serialize(component.Prices, JsonOptions),
+                            TrangThai = OrderServiceState.CHO_THUC_HIEN,
+                            CreatedAt = now,
+                            UpdatedAt = now
+                        });
+                    }
+                    pet.DichVuTrongDonChiTietDonItems.Add(comboOrder);
+                }
             }
             booking.ChiTietDonDonDatLichItems.Add(pet);
         }
+
+        if (createDeposit)
+        {
+            var deposit = new TienCoc
+            {
+                CoSoTinhSnapshot = total,
+                TyLe = 0.30m,
+                SoTienYeuCau = Math.Round(total * 0.30m, 0, MidpointRounding.AwayFromZero),
+                HetHanAt = now.AddMinutes(30),
+                TrangThaiYeuCau = DepositRequestState.CHO_THU,
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+            booking.TienCocDonDatLich = deposit;
+        }
+
         return booking;
     }
 
@@ -340,7 +567,6 @@ public sealed class BookingCreateService(
             }
             catch (DbUpdateException exception) when (IsUniqueViolation(exception, TrackingIndex))
             {
-                // EF rolls an unsuccessful save back to the transaction's savepoint.
             }
         }
         return false;
@@ -397,7 +623,7 @@ public sealed class BookingCreateService(
         foreach (var file in files)
         {
             if (fileHashes.ContainsKey(file.Name))
-                return null; // An ambiguous file name cannot match any committed request.
+                return null;
 
             await using var stream = file.OpenReadStream();
             fileHashes.Add(file.Name, Convert.ToHexString(await SHA256.HashDataAsync(stream, cancellationToken)));
@@ -406,7 +632,7 @@ public sealed class BookingCreateService(
         return Convert.ToHexString(SHA256.HashData(data));
     }
 
-    private static bool IsValid(BookingCreate request)
+    private static bool IsValid(BookingCreate request, bool isInternal)
     {
         if (request.RequestId == Guid.Empty || request.MaKhungGio <= 0 || request.NgayTra == default
             || request.MaKhachHang is <= 0 || request.ThuCung.Count is < 1 or > 20
@@ -423,7 +649,9 @@ public sealed class BookingCreateService(
 
         var existingPets = new HashSet<int>();
         return request.ThuCung.All(pet => pet is
-            { MaLoaiPhong: null, MaThuCung: not <= 0, MaHoSoTiemChung: not <= 0, CanNangKhaiBao: > 0 and <= 999.99m }
+            { MaThuCung: not <= 0, MaHoSoTiemChung: not <= 0, CanNangKhaiBao: > 0 and <= 999.99m }
+            && pet.MaLoaiPhong is not <= 0
+            && (pet.DichVu.Count > 0 || pet.MaLoaiPhong.HasValue)
             && decimal.Round(pet.CanNangKhaiBao, 2) == pet.CanNangKhaiBao
             && (pet.MaThuCung is { } id ? existingPets.Add(id)
                 : ValidText(pet.TenThuCung, 1, 150) && pet.LoaiPet is "CHO" or "MEO")
@@ -433,8 +661,8 @@ public sealed class BookingCreateService(
             && ValidOptionalText(pet.LoaiLong, 0, 100)
             && ValidOptionalText(pet.GhiChuDiUng, 0, 2000)
             && ValidOptionalText(pet.VaccinationFileKey, 1, 2000)
-            && pet.DichVu is { Count: > 0 }
-            && pet.DichVu.All(service => service is { MaDichVu: > 0, MaKhungGio: > 0, MaCombo: null }));
+            && pet.DichVu.All(service => service.MaKhungGio > 0
+                && ((service.MaDichVu is > 0 && service.MaCombo == null) || (service.MaCombo is > 0 && service.MaDichVu == null))));
     }
 
     private static bool ValidText(string? value, int minimum, int maximum) =>
@@ -451,6 +679,11 @@ public sealed class BookingCreateService(
     private static DateTimeOffset BusinessInstant(DateOnly day, TimeOnly time) =>
         TimeZoneInfo.ConvertTimeToUtc(day.ToDateTime(time), BusinessTimeZone);
 
+    private Task<Role?> GetRoleAsync(int actorId, CancellationToken cancellationToken) =>
+        db.NhanVienSet.AsNoTracking().Where(employee => employee.Id == actorId && employee.IsActive &&
+                employee.NhanVienQuyenNhanVienItems.Any(permission => permission.MaQuyen == "BOOKING_CREATE"))
+            .Select(employee => (Role?)employee.VaiTro).SingleOrDefaultAsync(cancellationToken);
+
     private static BookingCreateResult Invalid(string message = "Dữ liệu đặt lịch không hợp lệ.") =>
         Failure("VALIDATION_FAILED", message);
 
@@ -462,8 +695,11 @@ public sealed class BookingCreateService(
 
     private static BookingCreateResult Failure(string code, string message) => new(ErrorCode: code, Message: message);
 
-    private sealed record RequestedService(int PetIndex, int ServiceId, int SlotId);
+    private sealed record RequestedService(int PetIndex, int? ServiceId, int? ComboId, int SlotId);
     private sealed record ServiceSnapshot(string Name, int Duration, bool VaccinationRequired, Dictionary<SizeBand, decimal> Prices);
+    private sealed record ComboSnapshot(string Name, int Duration, bool VaccinationRequired, Dictionary<SizeBand, decimal> Prices, List<ComponentSnapshot> Components);
+    private sealed record ComponentSnapshot(int Id, string Name, int Duration, Dictionary<SizeBand, decimal> Prices);
+    private sealed record RoomTypeSnapshot(int Id, string Name, decimal GiaMoiDem, int SoLuongPhong);
     private sealed record BookingPolicy(string? GhiChu, IReadOnlyList<PetPolicy> ThuCung, BookingResponse CreationResponse);
     private sealed record PetPolicy(
         int MaChiTietDon, string? LoaiLong, string? GhiChuDiUng, bool YeuCauTiemChung, string? VaccinationObjectPath, string SizeCamKet);

@@ -404,7 +404,7 @@ public sealed class BookingManagementEndpointTests
         var data = await DataAsync(await LookupAsync(fixture.Public, Phone, TrackingCode));
         Assert.Equal(1, (int?)data["maDon"]);
         Assert.Equal("PENDING", (string?)data["trangThai"]);
-        Assert.Empty(data["hanhDongChoPhep"]!.AsArray());
+        Assert.Equal(new[] { "CANCEL" }, data["hanhDongChoPhep"]!.AsArray().Select(x => (string?)x));
         var json = data.ToJsonString();
         foreach (var secret in new[] { "objectPath", "internal-health-note", "other-booking-note", "other-booking.jpg",
                      "lienHe", "emailDelivery", "staff-login", "noi-bo-ghi-chu", "care/own.jpg" })

@@ -2,7 +2,9 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using PetSpa.Api.Data;
 using PetSpa.Core.Common;
+using PetSpa.Core.DTOs.Booking;
 using PetSpa.Core.DTOs.Care;
+using PetSpa.Core.DTOs.Identity;
 using PetSpa.Core.Entities.Billing;
 using PetSpa.Core.Entities.Booking;
 using PetSpa.Core.Entities.Care;
@@ -16,6 +18,146 @@ namespace PetSpa.Api.Services.Care;
 public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) : ICheckinService
 {
     private const string Permission = "CHECKIN_PERFORM";
+    private const string ReassignOperation = "CARE_REASSIGN";
+
+    public async Task<AssignmentCandidatesResult> GetAssignmentCandidatesAsync(
+        int actorId,
+        ShiftQuery query,
+        CancellationToken cancellationToken = default)
+    {
+        var actor = await operation.FindEmployeeWithGrantAsync(actorId, Permission, cancellationToken);
+        if (actor is null)
+            return new AssignmentCandidatesResult(403, Message: "Bạn không có quyền xem ứng viên phân công.", ErrorCode: "FORBIDDEN");
+
+        var errors = new List<ApiErrorItem>();
+        if (query.Ngay == default)
+            errors.Add(new ApiErrorItem { Field = "ngay", Message = "Ngày là bắt buộc." });
+        if (query.MaCa <= 0)
+            errors.Add(new ApiErrorItem { Field = "maCa", Message = "maCa phải lớn hơn 0." });
+        if (errors.Count > 0)
+            return new AssignmentCandidatesResult(400, Message: "Dữ liệu không hợp lệ.", ErrorCode: "VALIDATION_FAILED", Errors: errors);
+
+        var shiftExists = await dbContext.CaLamViecSet.AsNoTracking()
+            .AnyAsync(shift => shift.Id == query.MaCa, cancellationToken);
+        if (!shiftExists)
+            return new AssignmentCandidatesResult(404, Message: "Không tìm thấy ca làm việc.", ErrorCode: "NOT_FOUND");
+
+        var candidates = await dbContext.NhanVienSet.AsNoTracking()
+            .Where(employee => employee.IsActive
+                && employee.NhanVienQuyenNhanVienItems.Any(grant => grant.MaQuyen == "CARE_UPDATE")
+                && employee.DangKyCaNhanVienItems.Any(shift =>
+                    shift.Ngay == query.Ngay &&
+                    shift.CaLamViecId == query.MaCa &&
+                    shift.TrangThai == ShiftRegistrationState.APPROVED))
+            .OrderBy(employee => employee.Id)
+            .Select(employee => new Employee
+            {
+                MaNhanVien = employee.Id,
+                TenNhanVien = employee.TenNhanVien,
+                TenDangNhap = employee.TenDangNhap,
+                VaiTro = employee.VaiTro.ToString(),
+                Quyen = employee.NhanVienQuyenNhanVienItems.Select(grant => grant.MaQuyen).OrderBy(code => code).ToList(),
+                DangHoatDong = employee.IsActive
+            })
+            .ToListAsync(cancellationToken);
+
+        return new AssignmentCandidatesResult(200, candidates, "Lấy danh sách kỹ thuật viên khả dụng thành công.");
+    }
+
+    public async Task<CheckinResult> ReassignAsync(
+        int chiTietDonId,
+        int actorId,
+        AssignmentRequest request,
+        string traceId,
+        CancellationToken cancellationToken = default)
+    {
+        var errors = new List<ApiErrorItem>();
+        if (chiTietDonId <= 0)
+            errors.Add(new ApiErrorItem { Field = "id", Message = "ID chi tiết đơn phải lớn hơn 0." });
+        if (request.RequestId == Guid.Empty)
+            errors.Add(new ApiErrorItem { Field = "requestId", Message = "requestId không được để trống." });
+        if (request.MaNhanVien <= 0)
+            errors.Add(new ApiErrorItem { Field = "maNhanVien", Message = "maNhanVien phải lớn hơn 0." });
+        if (string.IsNullOrWhiteSpace(request.LyDo) || request.LyDo.Trim().Length > 1000)
+            errors.Add(new ApiErrorItem { Field = "lyDo", Message = "lyDo bắt buộc và tối đa 1000 ký tự." });
+
+        if (errors.Count > 0)
+            return new CheckinResult(400, Message: "Dữ liệu phân công lại không hợp lệ.", ErrorCode: "VALIDATION_FAILED", Errors: errors);
+
+        var reason = request.LyDo.Trim();
+        var fingerprint = CareOperation.Fingerprint(new
+        {
+            chiTietDonId,
+            request.RequestId,
+            request.MaNhanVien,
+            LyDo = reason
+        });
+        var command = new CareCommand(chiTietDonId, actorId, request.RequestId, Permission, ReassignOperation, traceId, fingerprint);
+        return ToCheckinResult(await operation.ExecuteAsync<BookingPet>(command, "Phân công lại nhân viên chăm sóc thành công.", null,
+            (actor, now, _, _, ct) => ReassignPetAsync(chiTietDonId, actor, request.MaNhanVien, reason, now, ct),
+            cancellationToken));
+    }
+
+    private async Task<CareResult<BookingPet>> ReassignPetAsync(
+        int petId,
+        NhanVien actor,
+        int newEmployeeId,
+        string reason,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        var pet = await CareProjection.IncludeDetails(dbContext.ChiTietDonSet)
+            .Include(p => p.DonDatLich).ThenInclude(booking => booking.HoaDonDonDatLichItems)
+            .AsSplitQuery()
+            .SingleOrDefaultAsync(p => p.Id == petId, cancellationToken);
+        if (pet is null)
+            return CareResult<BookingPet>.NotFound();
+
+        if (dbContext.Database.IsRelational())
+        {
+            var slotIds = pet.DichVuTrongDonChiTietDonItems
+                .Where(line => line.TrangThai != OrderServiceState.HUY)
+                .Select(line => line.KhungGioId)
+                .Distinct()
+                .OrderBy(id => id)
+                .ToArray();
+
+            if (slotIds.Length > 0)
+            {
+                await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                    $"SELECT id FROM khung_gio_dat_lich WHERE id = ANY({slotIds}) ORDER BY id FOR UPDATE",
+                    cancellationToken);
+            }
+
+            var todayHcm = CareOperation.HcmDate(now);
+            await dbContext.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT id FROM dang_ky_ca WHERE nhan_vien_id = {newEmployeeId} AND ngay = {todayHcm} ORDER BY id FOR UPDATE",
+                cancellationToken);
+        }
+
+        if (pet.DonDatLich.HoaDonDonDatLichItems.Any(invoice => invoice.TrangThai != InvoiceState.REVOKED))
+            return CareResult<BookingPet>.InvalidTransition("Đơn đặt lịch đã có hóa đơn hiệu lực, không thể phân công lại.");
+
+        if (pet.TrangThaiChamSoc is not (PetCareState.WAITING or PetCareState.IN_PROGRESS or PetCareState.PAUSED or PetCareState.READY))
+            return CareResult<BookingPet>.InvalidTransition("Chỉ có thể phân công lại khi thú cưng đang ở trạng thái WAITING, IN_PROGRESS, PAUSED hoặc READY.");
+
+        var assignee = await operation.FindEmployeeWithGrantAsync(newEmployeeId, "CARE_UPDATE", cancellationToken);
+        if (assignee is null)
+            return AssignmentUnavailable("Nhân viên được phân công phải hoạt động và có quyền CARE_UPDATE.");
+
+        if (!await operation.HasCurrentShiftAsync(assignee.Id, now, cancellationToken))
+            return AssignmentUnavailable("Nhân viên được phân công không có ca làm việc được duyệt tại thời điểm hiện tại.");
+
+        pet.NhanVienId = assignee.Id;
+        pet.UpdatedAt = now;
+        await dbContext.SaveChangesAsync(cancellationToken);
+
+        return new CareResult<BookingPet>(
+            200,
+            CareProjection.Pet(pet, actor, assignee.TenNhanVien),
+            AssigneeId: assignee.Id,
+            OverrideReason: reason);
+    }
 
     public async Task<CheckinResult> CheckinAsync(
         int chiTietDonId,
@@ -81,6 +223,7 @@ public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) 
 
         var pet = await CareProjection.IncludeDetails(dbContext.ChiTietDonSet)
             .Include(pet => pet.ThuCung)
+            .Include(pet => pet.LoaiPhong)
             .Include(pet => pet.DonDatLich).ThenInclude(booking => booking.HoaDonDonDatLichItems)
             .Include(pet => pet.DichVuTrongDonChiTietDonItems).ThenInclude(line => line.DichVu)
             .AsSplitQuery()
@@ -154,6 +297,22 @@ public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) 
             line.UpdatedAt = now;
             if (!reduce)
                 priceDelta += finalPrice.Value - (previousPrice ?? 0m);
+        }
+
+        if (pet.LoaiPhongId.HasValue)
+        {
+            var expectedNights = Math.Max(1,
+                CareOperation.HcmDate(booking.KetThucDuKien).DayNumber - CareOperation.HcmDate(booking.BatDauDuKien).DayNumber);
+            var committedPrice = pet.GiaPhongChot ?? pet.GiaPhongCamKet;
+            var finalRoomPrice = committedPrice ?? pet.LoaiPhong?.GiaMoiDem;
+            if (finalRoomPrice is null)
+                return CareResult<BookingPet>.InvalidTransition("Không xác định được giá phòng cho thú cưng lưu trú.");
+
+            var finalNights = pet.SoDemChot ?? expectedNights;
+            var previousRoomTotal = committedPrice.HasValue ? committedPrice.Value * finalNights : 0m;
+            pet.GiaPhongChot = finalRoomPrice.Value;
+            pet.SoDemChot = finalNights;
+            priceDelta += (finalRoomPrice.Value * finalNights) - previousRoomTotal;
         }
 
         pet.CanNangChot = request.CanNangThucTe;
@@ -316,7 +475,9 @@ public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) 
     private static (bool VaccinationRequired, SizeBand? CommittedSize) ReadBookingPolicy(ChiTietDon pet)
     {
         var requiredByCatalog = pet.DichVuTrongDonChiTietDonItems.Any(line =>
-            line.TrangThai != OrderServiceState.HUY && line.DichVu?.YeuCauTiemChung == true);
+            line.TrangThai != OrderServiceState.HUY &&
+            (line.DichVu?.YeuCauTiemChung == true ||
+             line.ThanhPhanDichVuTrongDonDichVuTrongDonItems.Any(part => part.DichVu?.YeuCauTiemChung == true)));
         if (string.IsNullOrWhiteSpace(pet.DonDatLich.ChinhSachSnapshot))
             return (requiredByCatalog, null);
 
@@ -360,6 +521,9 @@ public class CheckinService(PetSpaDbContext dbContext, CareOperation operation) 
             return snapshot;
         if (line.DichVuId is { } serviceId)
             return await dbContext.BangGiaSizeSet.Where(price => price.DichVuId == serviceId && price.SizeId == band.Id)
+                .Select(price => (decimal?)price.DonGia).FirstOrDefaultAsync(cancellationToken);
+        if (line.ComboId is { } comboId)
+            return await dbContext.BangGiaSizeSet.Where(price => price.ComboId == comboId && price.SizeId == band.Id)
                 .Select(price => (decimal?)price.DonGia).FirstOrDefaultAsync(cancellationToken);
         return line.GiaChot;
     }

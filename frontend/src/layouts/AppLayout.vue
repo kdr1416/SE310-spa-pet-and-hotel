@@ -185,12 +185,14 @@ const menuGroups = computed(() => {
     {
       title: "Công việc trong ngày",
       items: [
-        { to: "/staff/overview", label: "Tổng quan", icon: LayoutDashboard },
-        { to: "/staff/bookings", label: "Danh sách lịch hẹn", icon: CalendarDays },
+        ...(auth.can("BOOKING_READ") ? [
+          { to: "/staff/overview", label: "Tổng quan", icon: LayoutDashboard },
+          { to: "/staff/bookings", label: "Danh sách lịch hẹn", icon: CalendarDays },
+        ] : []),
         ...(auth.can("CARE_UPDATE")
           ? [{ to: "/staff/care-tasks", label: "Thực hiện dịch vụ", icon: HeartHandshake }]
           : []),
-        { to: "/staff/dashboard", label: "Lịch làm việc", icon: CalendarDays },
+        ...(auth.can("SCHEDULE_SELF") ? [{ to: "/staff/dashboard", label: "Lịch làm việc", icon: CalendarDays }] : []),
       ],
     },
     {
