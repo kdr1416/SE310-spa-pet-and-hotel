@@ -274,3 +274,24 @@ Không dùng `setx` để persist credentials ra user/machine environment. Chỉ
 - Thêm `backend/.env_example` chứa placeholders và các cờ live/seed mặc định false; không đọc/copy từ `.env` thật.
 - README trỏ tới template và có lệnh tạo file local chỉ khi chưa tồn tại; giữ hướng dẫn import tường minh.
 - Tech Lead yêu cầu push nhánh #25 và tạo PR vào develop; không tự merge PR hoặc chạy thao tác cloud.
+
+
+### Live acceptance cập nhật — 2026-11-24 (ưu tiên hơn trạng thái PENDING ở lần handoff trước)
+
+Tech Lead đã yêu cầu chạy Cloud smoke và xác nhận cho agent chuẩn hóa `.env`, chạy migration và bootstrap. Credentials chỉ được xử lý trong bộ nhớ/child-process environment, không in hoặc đưa vào Git. File local được đổi đúng hai connection strings sang Npgsql; sau bootstrap ba seed passwords được gỡ và các seed/live flags trong file giữ false.
+
+| Checkpoint | Kết quả thực tế |
+|---|---|
+| Neon direct preflight | PASS: direct/pooled cùng branch/database, target public schema ban đầu trống |
+| Migration direct | PASS: `dotnet ef database update --project backend/src/PetSpa.Api --startup-project backend/src/PetSpa.Api --no-build`; 33 bảng ứng dụng |
+| Bootstrap Staging | PASS: chạy một lần với seed flag trong process, không reset/xóa database |
+| Dữ liệu mẫu | 3 accounts, 24 permissions, 39 grants, 16 prices, 2 shifts, 2 APPROVED registrations, 2 slots ngày **2026-11-25** (giữ ngày cấu hình của Tech Lead) |
+| Seed-disabled restart | PASS: flags false, seed passwords gỡ khỏi file và env restart |
+| API thật với Staging env/Neon | `/api/health` 200 Healthy; E02 `/api/catalog` 200/success, 3 dịch vụ, 1 combo, 2 room types, 4 sizes |
+| Neon pooled smoke | PASS: 1/1 real-adapter test sau migration/bootstrap, đủ 33 bảng + FUR_CONDITIONS/EXTENSION_SETTINGS hợp lệ |
+| Supabase (lượt live trước trong cùng phiên nghiệm thu) | PASS: PNG upload, signed download anonymous/byte equality, public denial và Delete cleanup |
+| Gmail SMTP (lượt live trước) | PASS: server accepted mã giả `SMOKE-TEST-c35f54f2`; không gửi lại khi retry Neon |
+| Inbox delivery / password rotation | PENDING: Tech Lead kiểm tra inbox/spam và quy trình đổi mật khẩu bootstrap |
+| Browser E2E #27 / deploy hosting | PENDING: API chỉ được chạy local với Staging env kết nối Neon để nghiệm thu; hai process bootstrap/restart đã dừng sau kiểm tra, chưa deploy hosting |
+
+Các lượt đầu Neon từng fail do cổng 6543 rồi URI format; cấu hình cuối đã chuẩn hóa theo Console/Npgsql và lượt cuối PASS. Không thay thế các kết quả fail lịch sử bằng báo cáo 3/3 của một lệnh: Supabase/SMTP PASS ở lượt đầu, Neon PASS ở lượt riêng sau migration/bootstrap. PR #50 giữ chưa merge theo yêu cầu; bản Cloud nghiệm thu thuộc nhánh Issue #25, chưa chứng minh bản kết hợp develop với Dev C hoặc browser #27.
