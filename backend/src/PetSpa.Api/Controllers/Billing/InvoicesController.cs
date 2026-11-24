@@ -41,6 +41,20 @@ public class InvoicesController(IInvoiceService invoices) : ControllerBase
         return Respond(await invoices.CheckoutInvoiceAsync(id, request, actor, TraceId, cancellationToken));
     }
 
+    /// <summary>
+    /// E25: Thu hồi hóa đơn UNPAID sang REVOKED
+    /// POST /api/internal/invoices/{id}/withdraw
+    /// </summary>
+    [HttpPost("invoices/{id:int}/withdraw")]
+    public async Task<ActionResult<ApiResponse<InvoiceResponseDto>>> WithdrawInvoice(
+        int id, [FromBody] ReasonCommand request, CancellationToken cancellationToken)
+    {
+        if (!TryGetActorId(out var actor))
+            return Unauthenticated();
+
+        return Respond(await invoices.WithdrawInvoiceAsync(id, request, actor, TraceId, cancellationToken));
+    }
+
     private string TraceId => HttpContext.TraceIdentifier[..Math.Min(40, HttpContext.TraceIdentifier.Length)];
 
     private bool TryGetActorId(out int actorId) =>
