@@ -159,6 +159,7 @@ builder.Services.AddDbContext<PetSpaDbContext>(options =>
 
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
 builder.Services.AddScoped<IDepositService, DepositService>();
+builder.Services.AddScoped<IExtraChargeService, ExtraChargeService>();
 builder.Services.AddScoped<ICatalogService, CatalogService>();
 
 // CORS configuration for local frontend development
