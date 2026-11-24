@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using Microsoft.Extensions.Hosting;
@@ -252,7 +253,9 @@ public class SeedDataTests
     public async Task DisabledSeed_DoesNotConnectToDatabase(string environment)
     {
         using var factory = SeedApplicationFactory.Create("Host=127.0.0.1;Port=1;Database=unused",
-            string.Empty, environment, enabled: false);
+            string.Empty, environment, enabled: false).WithWebHostBuilder(builder =>
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                    new Dictionary<string, string?> { ["DepositExpiry:BackgroundEnabled"] = "false" })));
         using var client = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost") });
         var response = await client.GetAsync("/api/health");
         Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);

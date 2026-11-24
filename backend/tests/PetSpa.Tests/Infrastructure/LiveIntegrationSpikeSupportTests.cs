@@ -1,3 +1,5 @@
+using System.Buffers.Binary;
+using System.IO.Compression;
 using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
@@ -105,6 +107,47 @@ public sealed class LiveIntegrationSpikeSupportTests
         await VerifyStorageRoundTripAsync(storage, client, new Uri("https://storage.example.test"), "staging", _ => { }, default);
         Assert.Equal(new[] { "upload", "sign", "signed-get", "public-get", "delete" }, storage.Events);
         Assert.Equal(Path, storage.DeletedPath);
+    }
+
+    [Fact]
+    public async Task Storage_UploadsAValidOnePixelPngWithCorrectChunkChecksums()
+    {
+        var storage = new StorageStub();
+        using var client = new HttpClient(new StorageHandler(storage, 404));
+        await VerifyStorageRoundTripAsync(storage, client, new Uri("https://storage.example.test"), "staging", _ => { }, default);
+        var png = storage.Uploaded;
+        Assert.Equal(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 }, png[..8]);
+        using var compressed = new MemoryStream();
+        var chunks = new List<string>();
+        for (var offset = 8; offset < png.Length;)
+        {
+            var length = checked((int)BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(offset, 4)));
+            var type = System.Text.Encoding.ASCII.GetString(png, offset + 4, 4);
+            chunks.Add(type);
+            Assert.InRange(length, 0, png.Length - offset - 12);
+            // PNG CRC covers the chunk type and data, independently of the uploader.
+            uint crc = uint.MaxValue;
+            for (var i = offset + 4; i < offset + 8 + length; i++)
+            {
+                crc ^= png[i];
+                for (var bit = 0; bit < 8; bit++) crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xedb88320u : crc >> 1;
+            }
+            Assert.Equal(BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(offset + 8 + length, 4)), ~crc);
+            if (type == "IHDR")
+            {
+                Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(offset + 8, 4)));
+                Assert.Equal(1u, BinaryPrimitives.ReadUInt32BigEndian(png.AsSpan(offset + 12, 4)));
+            }
+            if (type == "IDAT") compressed.Write(png, offset + 8, length);
+            offset += length + 12;
+        }
+        Assert.Equal(new[] { "IHDR", "IDAT", "IEND" }, chunks);
+        Assert.Equal(new byte[] { 8, 6, 0, 0, 0 }, png[24..29]);
+        compressed.Position = 0;
+        using var inflate = new ZLibStream(compressed, CompressionMode.Decompress);
+        using var pixels = new MemoryStream();
+        await inflate.CopyToAsync(pixels);
+        Assert.Equal(new byte[] { 0, 0, 0, 0, 255 }, pixels.ToArray());
     }
 
     [Theory]

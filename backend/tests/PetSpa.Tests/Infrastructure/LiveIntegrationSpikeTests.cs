@@ -155,7 +155,7 @@ public sealed class LiveIntegrationSpikeTests(ITestOutputHelper output)
     internal static async Task VerifyStorageRoundTripAsync(IFileStorageService storage, HttpClient anonymousClient,
         Uri projectUrl, string bucket, Action<string> write, CancellationToken ct)
     {
-        var image = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jF0sAAAAASUVORK5CYII=");
+        var image = Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==");
         string? objectPath = null;
         string? failure = null;
         var stage = "UPLOAD";
