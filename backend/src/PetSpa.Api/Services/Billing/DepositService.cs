@@ -45,6 +45,7 @@ public sealed class DepositService(
     private const string RefundPermission = "DEPOSIT_REFUND";
     private const string AuditRequestIndex = "ix_audit_log_actor_id_hanh_dong_request_id";
     private const string ReceiptRequestIndex = "ix_giao_dich_thu_request_id";
+    private const string BankReceiptIndex = "ix_giao_dich_thu_ngan_hang_ma_giao_dich";
     private const string RefundRequestIndex = "ix_hoan_coc_request_id";
     private const decimal MaximumMoney = 99_999_999_999_999m;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
@@ -213,6 +214,13 @@ public sealed class DepositService(
             context.ChangeTracker.Clear();
             return await ReadReplayAsync<DepositDto>(actorId, ConfirmPermission, request.RequestId, fingerprint, "Ghi nhận thu cọc thành công.", ct)
                 ?? FailCmd<DepositDto>("RequestId đã được sử dụng với dữ liệu khác.", "IDEMPOTENCY_CONFLICT");
+        }
+        catch (DbUpdateException ex) when (UniqueIndex(ex) is BankReceiptIndex)
+        {
+            if (tx is not null) await tx.RollbackAsync(ct);
+            context.ChangeTracker.Clear();
+            return await ReadReplayAsync<DepositDto>(actorId, ConfirmPermission, request.RequestId, fingerprint, "Ghi nhận thu cọc thành công.", ct)
+                ?? FailCmd<DepositDto>("Mã giao dịch ngân hàng đã được ghi nhận.", "INVALID_TRANSITION");
         }
     }
 
@@ -614,7 +622,9 @@ public sealed class DepositService(
 
     private Task<Role?> GetActorRoleAsync(int actorId, string permission, CancellationToken ct) =>
         context.NhanVienSet.AsNoTracking()
-            .Where(n => n.Id == actorId && n.IsActive && n.NhanVienQuyenNhanVienItems.Any(q => q.MaQuyen == permission))
+            .Where(n => n.Id == actorId && n.IsActive
+                && (permission != RefundPermission || n.VaiTro == Role.ADMIN)
+                && n.NhanVienQuyenNhanVienItems.Any(q => q.MaQuyen == permission))
             .Select(n => (Role?)n.VaiTro)
             .SingleOrDefaultAsync(ct);
 

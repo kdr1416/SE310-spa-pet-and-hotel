@@ -3,9 +3,11 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;
+using System.Data.Common;
 using FluentAssertions;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -28,6 +30,122 @@ namespace PetSpa.Tests.Billing;
 public sealed class DepositsRefundsEndpointTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
+    [Fact]
+    public async Task ConfirmReceipt_ConcurrentBankReferenceAcrossBookings_ReturnsConflictWithoutDoubleCredit()
+    {
+        await using var database = await PostgresTestDatabase.CreateAsync();
+        var clock = new MutableClock(new DateTimeOffset(2026, 11, 23, 8, 0, 0, TimeSpan.Zero));
+        var seed = new SeedRefs();
+        int secondDepositId;
+        await using (var db = database.CreateContext())
+        {
+            SeedDepositScenario(db, seed, clock.GetUtcNow(), 300_000m);
+            var first = await db.DonDatLichSet.FindAsync(seed.BookingId);
+            var firstSlot = await db.KhungGioDatLichSet.FindAsync(seed.SlotId);
+            var secondSlot = new KhungGioDatLich
+            {
+                Ngay = firstSlot!.Ngay.AddDays(1), CaLamViecId = firstSlot.CaLamViecId,
+                MoNhanKhach = true, TongSlot = 10, TranPhut = 240
+            };
+            db.KhungGioDatLichSet.Add(secondSlot);
+            await db.SaveChangesAsync();
+            var second = new DonDatLich
+            {
+                TrackingCode = "TRK-DEP2", RequestId = Guid.NewGuid(), KhungGioId = secondSlot.Id,
+                KhachHangId = first!.KhachHangId, TenNguoiDat = first.TenNguoiDat,
+                SoDienThoaiSnapshot = first.SoDienThoaiSnapshot, EmailSnapshot = first.EmailSnapshot,
+                BatDauDuKien = first.BatDauDuKien.AddDays(1), KetThucDuKien = first.KetThucDuKien.AddDays(1),
+                TrangThai = BookingState.PENDING, TongTamTinh = 1_000_000m
+            };
+            db.DonDatLichSet.Add(second);
+            await db.SaveChangesAsync();
+            var deposit = new TienCoc
+            {
+                DonDatLichId = second.Id, CoSoTinhSnapshot = 1_000_000m, TyLe = 0.30m,
+                SoTienYeuCau = 300_000m, HetHanAt = clock.GetUtcNow().AddMinutes(30),
+                TrangThaiYeuCau = DepositRequestState.CHO_THU
+            };
+            db.TienCocSet.Add(deposit);
+            await db.SaveChangesAsync();
+            secondDepositId = deposit.Id;
+        }
+        var barrier = new BankReferenceReadBarrier();
+        using var factory = new PostgresWebApplicationFactory(database.ConnectionString).WithWebHostBuilder(builder =>
+            builder.ConfigureServices(services =>
+            {
+                services.Replace(ServiceDescriptor.Singleton<TimeProvider>(clock));
+                services.AddDbContext<PetSpaDbContext>(options => options.AddInterceptors(barrier));
+            }));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Staff!));
+        Task<HttpResponseMessage> Receipt(int id) => client.PostAsJsonAsync($"/api/internal/deposits/{id}/receipts", new
+        {
+            requestId = Guid.NewGuid(), soTien = 100_000, phuongThuc = "BANK_TRANSFER",
+            giaoDichAt = clock.GetUtcNow(), nganHang = "VCB", maGiaoDich = "SAME-BANK-REFERENCE"
+        });
+        var responses = await Task.WhenAll(Receipt(seed.DepositId), Receipt(secondDepositId));
+        try
+        {
+            barrier.Arrivals.Should().Be(2);
+            responses.Select(response => response.StatusCode).Should().BeEquivalentTo(
+                new[] { HttpStatusCode.Created, HttpStatusCode.Conflict });
+            var conflict = responses.Single(response => response.StatusCode == HttpStatusCode.Conflict);
+            (await conflict.Content.ReadFromJsonAsync<ApiResponse<DepositDto>>(JsonOptions))!.ErrorCode.Should().Be("INVALID_TRANSITION");
+            await using var verify = database.CreateContext();
+            (await verify.GiaoDichThuSet.CountAsync()).Should().Be(1);
+            (await verify.GiaoDichThuSet.SumAsync(receipt => receipt.SoTien)).Should().Be(100_000m);
+        }
+        finally { foreach (var response in responses) response.Dispose(); }
+    }
+
+    [Theory]
+    [InlineData("create")]
+    [InlineData("confirm")]
+    [InlineData("list")]
+    public async Task Refunds_StaffWithRefundPermissionCannotUseAdminOperations(string operation)
+    {
+        var clock = new MutableClock(new DateTimeOffset(2026, 11, 23, 8, 0, 0, TimeSpan.Zero));
+        var seed = new SeedRefs();
+        using var factory = CreateFactory(clock, db =>
+        {
+            SeedDepositScenario(db, seed, clock.GetUtcNow(), 300_000m);
+            db.NhanVienQuyenSet.Add(new NhanVienQuyen
+            {
+                NhanVienId = seed.Staff!.Id, MaQuyen = "DEPOSIT_REFUND", CapBoiId = seed.Admin!.Id, CapAt = clock.GetUtcNow()
+            });
+            var booking = db.DonDatLichSet.Find(seed.BookingId)!;
+            booking.TrangThai = BookingState.IN_PROGRESS;
+            booking.TongTamTinh = 180_000m;
+            db.GiaoDichThuSet.Add(new GiaoDichThu
+            {
+                RequestId = Guid.NewGuid(), SoTien = 300_000m, PhuongThuc = PaymentMethod.CASH,
+                GiaoDichAt = clock.GetUtcNow(), XacNhanAt = clock.GetUtcNow(),
+                TienCocId = seed.DepositId, XacNhanBoiId = seed.Staff.Id
+            });
+            db.SaveChanges();
+        }, new FakeFileStorageService(), new FakeEmailSender());
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Admin!));
+        using var created = await client.PostAsJsonAsync($"/api/admin/deposits/{seed.DepositId}/refunds",
+            new { requestId = Guid.NewGuid(), soTien = 50_000, lyDo = "Hoàn cọc dư" });
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+        var refund = (await created.Content.ReadFromJsonAsync<ApiResponse<RefundDto>>(JsonOptions))!.Data!;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Staff!));
+        using var response = operation switch
+        {
+            "create" => await client.PostAsJsonAsync($"/api/admin/deposits/{seed.DepositId}/refunds",
+                new { requestId = Guid.NewGuid(), soTien = 50_000, lyDo = "Hoàn thêm cọc dư" }),
+            "confirm" => await client.PostAsJsonAsync($"/api/admin/refunds/{refund.MaHoanCoc}/confirm",
+                new { requestId = Guid.NewGuid(), phuongThuc = "CASH", hoanAt = clock.GetUtcNow(), thamChieu = "counter-proof" }),
+            _ => await client.GetAsync("/api/admin/refunds")
+        };
+        response.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+        (await response.Content.ReadFromJsonAsync<ApiResponse<object>>(JsonOptions))!.ErrorCode.Should().Be("FORBIDDEN");
+        using var scope = factory.Services.CreateScope();
+        var verify = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        (await verify.HoanCocSet.SingleAsync()).TrangThai.Should().Be(RefundState.CHO_HOAN);
+    }
 
     // =========================================================================
     // E42: Thu cọc 30% (đủ, thiếu, cộng dồn, trùng mã GD, replay idempotent)
@@ -495,6 +613,26 @@ public sealed class DepositsRefundsEndpointTests
         public int BookingId { get; set; }
         public int SlotId { get; set; }
         public int DepositId { get; set; }
+    }
+
+    private sealed class BankReferenceReadBarrier : DbCommandInterceptor
+    {
+        private readonly TaskCompletionSource _bothRead = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _arrivals;
+        public int Arrivals => _arrivals;
+        public override async ValueTask<DbDataReader> ReaderExecutedAsync(DbCommand command,
+            CommandExecutedEventData eventData, DbDataReader result, CancellationToken cancellationToken = default)
+        {
+            if (command.CommandText.Contains("SELECT EXISTS", StringComparison.Ordinal)
+                && command.CommandText.Contains("giao_dich_thu", StringComparison.Ordinal)
+                && command.CommandText.Contains("ngan_hang", StringComparison.Ordinal)
+                && command.CommandText.Contains("ma_giao_dich", StringComparison.Ordinal))
+            {
+                if (Interlocked.Increment(ref _arrivals) == 2) _bothRead.TrySetResult();
+                await _bothRead.Task.WaitAsync(TimeSpan.FromSeconds(15), cancellationToken);
+            }
+            return result;
+        }
     }
 
     private sealed class MutableClock(DateTimeOffset initial) : TimeProvider
