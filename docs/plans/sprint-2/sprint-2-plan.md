@@ -8,7 +8,7 @@
 
 **Architecture:** Giữ kiến trúc Pragmatic Modular Monolith 3 tầng (`PetSpa.Core` -> `PetSpa.Api` -> `PetSpa.Tests`), controller mỏng, service inject trực tiếp `PetSpaDbContext`, tuyệt đối không thêm Repository/CQRS/MediatR và giữ nguyên Schema Freeze (33 bảng + amendment `tinh_trang_long`). Mở đầu Sprint 2 bằng Issue nền tảng (#14) từ baseline `origin/develop` (`226937e`, đã hoàn tất đủ 15 operations Sprint 1) để chốt toàn bộ shared DTOs, `BookingProjection` deposit mapping, `HotelCapacityCalculator`, `DepositExpiryService`, helper tính toán dùng chung gọn nhẹ `BillingSettlementHelper : IBillingSettlementHelper`, nâng cấp `SmtpEmailSender` lên `MailKit` và mở rộng `DbInitializer` trước khi 4 thành viên rẽ nhánh code song song.
 
-**Tech Stack:** .NET 10 Web API, EF Core 10 + Npgsql (Neon PostgreSQL port `5432` migration / `6543` runtime pooler), Supabase Storage (private bucket + Signed URL), MailKit/SMTP, xUnit + `PostgresWebApplicationFactory`, Vue 3 + Pinia + Axios + Vitest.
+**Tech Stack:** .NET 10 Web API, EF Core 10 + Npgsql (Neon PostgreSQL direct migration / pooled runtime theo Console), Supabase Storage (private bucket + Signed URL), MailKit/SMTP, xUnit + `PostgresWebApplicationFactory`, Vue 3 + Pinia + Axios + Vitest.
 
 **Spec:**
 - [docs/design/api-contract.md](../../design/api-contract.md) (v1.0-LOCKED)
@@ -82,7 +82,7 @@
 | Làn công việc | Phụ trách | Danh sách Issues | Operations & Hạng mục sở hữu |
 |---|---|---|---|
 | **Làn 0 — Nền tảng & Mở khóa** | **Tech Lead** *(Dev A, B, C review)* | **Issue #14** | Shared DTOs Sprint 2, `BookingProjection` full mapping (components, hotel fields, deposit projection), `HotelCapacityCalculator` + `SpaCapacityCalculator` expired-hold read compensation, `DepositExpiryService`, class tính toán gọn nhẹ `BillingSettlementHelper : IBillingSettlementHelper`, nâng cấp `SmtpEmailSender` lên `MailKit`, mở rộng `DbInitializer` (G1). |
-| **Làn 1 — Hạ tầng, Ca làm việc & Frontend** | **Tech Lead** | **Issue #24, #25, #26, #27** | **5 Ops Ca kíp:** `E27, E28, E29, E54, E55` (#24).<br/>**Staging & Spike:** Neon PostgreSQL (`5432`/`6543`) + Spike Supabase Storage & MailKit SMTP thật (#25).<br/>**Frontend Vue 3:** Hybrid Routing cho 15 operations Sprint 1 (#26 Phase 1).<br/>**E2E Sprint 2:** Kiểm thử luồng backend qua HTTP (#27). |
+| **Làn 1 — Hạ tầng, Ca làm việc & Frontend** | **Tech Lead** | **Issue #24, #25, #26, #27** | **5 Ops Ca kíp:** `E27, E28, E29, E54, E55` (#24).<br/>**Staging & Spike:** Neon PostgreSQL (direct/pooled theo Console) + Spike Supabase Storage & MailKit SMTP thật (#25).<br/>**Frontend Vue 3:** Hybrid Routing cho 15 operations Sprint 1 (#26 Phase 1).<br/>**E2E Sprint 2:** Kiểm thử luồng backend qua HTTP (#27). |
 | **Làn 2 — Booking, Hotel, Khách hàng & Tracking** | **Dev A** | **Issue #15, #16, #17** | **7 Ops + Gỡ G2, G3:** Mở rộng `E03, E04` cho Hotel/Combo/Cọc + `E05` Booking tại quầy (#15); `E06, E07` Tra cứu khách & sửa pet (#16); `E10b, E13, E09, E50` + mở rộng `E11/E12` hủy/dời lịch/tracking resend (#17). |
 | **Làn 3 — Phân công, Combo `E61` & Ngoại lệ Pet** | **Dev B** | **Issue #18, #19, #20** | **7 Ops (`E14, E16, E61, E21, E47, E48, E49`) + Gỡ G4:** `E14, E16` + mở rộng `E15` Check-in Combo/Hotel (#18); `E61` Hoàn tất thành phần combo & `E21` Hoàn tất/hủy dịch vụ phát sinh + guard `E17 READY` (#19); `E47` Hủy riêng pet, `E48` Nhận sớm, `E49` Trả pet hủy (#20). |
 | **Làn 4 — Cọc 30%, Hoàn cọc, Phát sinh & Hóa đơn** | **Dev C** | **Issue #21, #22, #23** | **10 Ops (`E42–E46, E20, E22a–c, E25`) + Gỡ G5:** `E42, E43, E44, E45, E46` Thu cọc & Hoàn cọc (#21); `E20` Thêm dịch vụ phát sinh & `E22a, E22b, E22c` Phụ phí (#22); Mở rộng `E23` Hóa đơn Hotel/Combo/Cọc & `E25` Thu hồi hóa đơn (#23). |
@@ -103,7 +103,7 @@ flowchart TD
     subgraph Lane1["Làn 1: Tech Lead"]
         I26["Issue #26 Phase 1 (1–2 ngày): Hybrid Routing (G6)<br/>Core Transport cho 15 operations Sprint 1"]
         I24["Issue #24 (5h): Lịch & Ca kíp<br/>E27, E28, E29, E54, E55"]
-        I25["Issue #25 (4h): Neon Staging (5432/6543)<br/>& Live Spike Supabase + MailKit SMTP"]
+        I25["Issue #25 (4h): Neon Staging (direct/pooled)<br/>& Live Spike Supabase + MailKit SMTP"]
         I26 --> I24 --> I25
     end
 
@@ -747,12 +747,13 @@ flowchart TD
 
 ---
 
-### Task 12 (Issue #25): [Infra] Dựng Staging Neon PostgreSQL (`5432`/`6543`) & Integration Spike Supabase Storage + MailKit SMTP
+### Task 12 (Issue #25): [Infra] Neon Staging (direct/pooled theo Console) & Integration Spike Supabase Storage + MailKit SMTP
 
 - **Assignee:** `Tech Lead`
 - **Branch:** `chore/issue-25-staging-and-integration-spike`
 - **Dependencies:** Issue #14 đã merge.
-- **Scope:** Cấu hình hạ tầng Staging trên Neon PostgreSQL (migration qua cổng direct `5432`, runtime qua cổng pooler `6543`), và thêm bộ smoke test xác minh thật (opt-in qua biến môi trường) cho Neon + Supabase Storage + MailKit SMTP (đã được nâng cấp ở Task 1 / Issue #14).
+- **Scope:** Neon migration dùng direct endpoint, runtime/live smoke dùng pooled endpoint; host/port lấy từ Neon Console (thường cùng 5432, pooled host có `-pooler`), không ép 6543. Factory đọc `ConnectionStrings__MigrationConnection`, giữ connectionless fallback; bootstrap Staging qua `SeedData:Enabled`, Production vẫn chặn. Ba real-adapter tests opt-in giữ CI offline no-op PASS.
+- **Spec/plan đã duyệt:** [Design](../../superpowers/specs/2026-11-24-issue-25-staging-and-live-smoke-design.md), [Implementation plan](../../superpowers/plans/2026-11-24-issue-25-staging-and-live-smoke.md).
 
 **Handoff browser smoke #26 → #27 (chốt 2026-11-23):** #25 chuẩn bị môi trường; #27 thực hiện nghiệm thu browser có đăng nhập. Trước khi bàn giao, xác nhận backend chạy và kết nối Neon test/staging đã migrate/seed, frontend live trỏ đúng backend với `VITE_USE_MOCK_API=false` và CORS hợp lệ, tài khoản test có quyền lễ tân/thu ngân và Staff chăm sóc cùng ca APPROVED, private bucket/Signed URL và hộp thư SMTP test đã qua live spike. Chỉ bàn giao thông tin cấu hình không nhạy cảm và cách cấp tài khoản test, không ghi credentials vào plan. PostgreSQL local thật đã được dùng trong test #26; phần chưa nghiệm thu là môi trường tích hợp live và browser đăng nhập.
 
@@ -762,28 +763,37 @@ flowchart TD
 - Modify: `backend/src/PetSpa.Api/appsettings.json`
 - Create: `backend/tests/PetSpa.Tests/Infrastructure/LiveIntegrationSpikeTests.cs`
 - Modify: `backend/README.md`
+- Modify: `backend/src/PetSpa.Api/Data/PetSpaDbContextFactory.cs`, `backend/src/PetSpa.Api/Data/Seeding/DbInitializer.cs`
+- Modify: `backend/tests/PetSpa.Tests/Seeding/SeedDataTests.cs`
+- Create: `backend/tests/PetSpa.Tests/Infrastructure/DbContextFactoryTests.cs`, `LiveIntegrationSpikeSupportTests.cs` trong cùng thư mục
+- Modify: dòng quy ước port trong `AGENTS.md`, `.codex/instructions.md`
+- Không sửa Storage adapter/interface/tests hiện có; ảnh smoke phẳng `{Guid:N}.png` ở bucket Staging riêng, không prefix/overload.
 
 **Interfaces:**
-- Consumes: `IConfiguration` (`ConnectionStrings:DefaultConnection` port `6543`, `ConnectionStrings:MigrationConnection` port `5432`, `Supabase:Storage:*`, `Smtp:*`), `IFileStorageService`, `IEmailSender`
+- Consumes: `IConfiguration` (`ConnectionStrings:DefaultConnection` pooled, `ConnectionStrings__MigrationConnection` direct qua factory env, `Supabase:Storage:*`, `Smtp:*`, `LiveSpike:EmailRecipient`), `IFileStorageService`, `IEmailSender`. Local `backend/.env` phải import tường minh vào process, .NET/EF/xUnit không tự nạp; không truyền credential qua CLI arguments hoặc frontend.
 - Produces:
   - `LiveIntegrationSpikeTests`:
     - Mặc định pass nhanh (noop) khi biến môi trường `PETSPA_LIVE_SPIKE_ENABLED` khác `"true"` để không làm gãy CI offline.
     - Khi `PETSPA_LIVE_SPIKE_ENABLED=true`:
-      1. Kiểm tra kết nối tới Neon PostgreSQL runtime pooler (`6543`) và xác nhận đủ 33 bảng + dữ liệu `CatalogSeed` (`FUR_CONDITIONS`).
-      2. Upload 1 ảnh PNG 1x1 byte thật lên private bucket của Supabase Storage, gọi `CreateReadUrlAsync` lấy Signed URL TTL 5 phút, tải lại qua `HttpClient` xác nhận HTTP `200`, rồi gọi `DeleteAsync` dọn sạch object.
+      1. Chỉ đọc Neon pooled endpoint; đủ 33 bảng ứng dụng theo tên/schema, sáu mã FUR_CONDITIONS và EXTENSION_SETTINGS boolean hợp lệ (`!cocHotel || giuCho`). Không migrate/seed/create/drop/reset DB.
+      2. Upload PNG 1x1 hợp lệ lên private bucket, Signed URL TTL 5 phút tải anonymous HTTP200 + byte equality, public URL anonymous phải từ chối 400/403/404, Delete đúng object trong finally với token riêng 15 giây. Cleanup lỗi vẫn FAIL và báo objectPath để dọn tay; không log signed URL/raw upstream exception.
       3. Gửi 1 email kiểm thử qua `SmtpEmailSender` (MailKit) tới hộp thư test được cấu hình.
-  - Cập nhật `backend/README.md` với hướng dẫn chạy migration qua cổng `5432`, cấu hình runtime cổng `6543`, bật `CatalogSeed:Enabled` và `EXTENSION_SETTINGS` trên Staging, cùng lệnh chạy `LiveIntegrationSpikeTests`.
+  - README hướng dẫn Tech Lead tự provisioning/migrate/bootstrap trên Staging, tắt seed/gỡ seed passwords/restart, nhắc rotation, health200 và E02 catalog200, ba live tests và handoff #27. CatalogSeed dùng AdminId thật; extension flags ban đầu false, không tự bật OTP/cọc trong smoke. SMTP acceptance và inbox delivery ghi riêng. Chưa chạy live thì handoff ghi PENDING.
 
-- [ ] **Step 1: Write the failing test in `LiveIntegrationSpikeTests.cs`**
-- [ ] **Step 2: Run test to verify it fails**
-  - Run: `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~LiveIntegrationSpikeTests" -m:1`
-  - Expected: FAIL.
-- [ ] **Step 3: Implement `LiveIntegrationSpikeTests` and document Staging runbook in `backend/README.md`**
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 1: RED regression tests cho factory/Staging guard và offline support tests cho live guard/cleanup**
+- [x] **Step 2: Run regression tests to verify RED**
+  - Run: `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~DbContextFactoryTests|FullyQualifiedName~SeedDataTests|FullyQualifiedName~LiveIntegrationSpikeSupportTests" -m:1`
+  - Expected: FAIL đúng behavior chưa triển khai; live Facts mặc định phải no-op PASS, không dùng live-off FAIL làm RED.
+- [x] **Step 3: Implement `LiveIntegrationSpikeTests` and document Staging runbook in `backend/README.md`**
+- [x] **Step 4: Run tests to verify they pass**
   - Run: `dotnet test backend/PetSpa.sln -m:1`
   - Expected: PASS 100%, `0 warnings`.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   - `git commit -m "chore(infra): add Neon Staging runbook and Supabase/MailKit live integration spike tests"`
+
+---
+
+**Execution evidence (2026-11-24):** Code và runbook đã triển khai trong nhánh #25; full offline suite `dotnet test backend/PetSpa.sln -m:1` **632/632 PASS, 0 skipped, 0 errors, 0 warnings**. Ba live Facts khi tắt flag: **3/3 no-op PASS**, chưa truy cập cloud. EF tool 10.0.14 và sinh migration SQL connectionless đã được kiểm chứng. Hai P2 từ independent review (PNG IDAT CRC, foreground-shell runbook) đã sửa và kiểm chứng. Tech Lead xác nhận `.env` đã điền; agent không đọc/import file. Migration/bootstrap/API thật/live ba dịch vụ/inbox/rotation và handoff #27 vẫn **PENDING**.
 
 ---
 

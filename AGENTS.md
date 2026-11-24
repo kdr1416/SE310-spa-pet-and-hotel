@@ -80,7 +80,7 @@ Follow my latest request and project-specific conventions. Use this file as the 
 - **Backend Architecture:** Pragmatic .NET Web API (`backend/PetSpa.sln`), layered into `PetSpa.Core` (domain/DTOs/interfaces), `PetSpa.Api` (controllers/EF Core/migrations), `PetSpa.Tests` (xUnit tests). Avoid CQRS, MediatR, or speculative abstractions.
 - **Single Source of Truth:** Code generation must strictly align with `docs/design/api-contract.md` (routes, DTOs, response schemas) and `docs/requirements/scope-and-decisions.md` (business decisions D01-D19, Q01-Q08).
 - **Testing:** Mandatory xUnit test coverage for all new endpoints using `WebApplicationFactory<Program>` in `backend/tests/PetSpa.Tests`.
-- **Database:** PostgreSQL on Neon. Connection pooling on port 6543 for runtime; direct connection on port 5432 for EF migrations. Never hardcode credentials.
+- **Database:** PostgreSQL on Neon. Use the Neon pooled endpoint (hostname includes -pooler) for runtime and the direct endpoint for EF migrations. Copy host and port from Neon Console; both normally use port 5432, do not force port 6543. Never hardcode credentials.
 - **Detailed Agent Rules:** See `.codex/instructions.md` for tool-specific instructions.
 
 ## Skill Routing & Lazy Context Loading (Anti-Context-Bloat)

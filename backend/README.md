@@ -1,5 +1,7 @@
 # PetSpa Backend — M3 schema foundation
 
+Task 12 / Issue #25 bổ sung [Staging runbook](#staging-runbook--issue-25) bên dưới. Các mục M3 ghi lại nền tảng schema, không thay thế các checkpoint vận hành Staging.
+
 - Core: 15 enums, 33 entities; no EF dependency.
 - Api/Data: one configuration per entity, PetSpaDbContext and a connectionless design-time factory.
 - Migrations: InitialCoreSchema and snapshot; no database has been updated by this task.
@@ -19,15 +21,15 @@ The local dotnet-ef tool is pinned to 10.0.14. EF Relational is explicitly pinne
 
 ## Configuration and offline migrations
 
-Runtime uses the existing ConnectionStrings:DefaultConnection key (environment variable ConnectionStrings__DefaultConnection), provided outside source control; runtime Neon uses pooler port 6543. The existing MigrationConnection key is reserved for an explicitly authorized future database operation via direct port 5432.
+Runtime uses ConnectionStrings:DefaultConnection (environment variable ConnectionStrings__DefaultConnection), provided outside source control, with the Neon pooled endpoint. Migrations use ConnectionStrings__MigrationConnection with the direct endpoint. Copy host and port from Neon Console: both normally use 5432; the pooled hostname contains -pooler. Do not force port 6543.
 
-PetSpaDbContextFactory builds UseNpgsql() options without reading configuration or supplying a connection string. Creating migrations and generating migration SQL do not open a database. The command used to create the initial migration was:
+PetSpaDbContextFactory reads only ConnectionStrings__MigrationConnection from the process environment. When missing or whitespace, it builds connectionless UseNpgsql() options, so local migration generation still needs no credentials. Constructing the context does not open a connection; database update is a separate, deliberate operation. The command used to create the initial migration was:
 
 ```powershell
 dotnet ef migrations add InitialCoreSchema --project backend/src/PetSpa.Api --startup-project backend/src/PetSpa.Api --no-build
 ```
 
-Do not rerun that name after the migration exists. This task did not run database update, EnsureCreated or Migrate.
+Do not rerun that name after the migration exists. To apply existing migrations to Staging, follow the runbook below; the API and live smoke tests do not migrate automatically.
 
 DatabaseModelTests inspect the real Npgsql model, DI wiring, restrictive FKs, keys/indexes/types and the generated migration script, including snapshot consistency. The SQL script has 33 application tables plus EF's own __EFMigrationsHistory; that history table is not a 34th domain entity.
 
@@ -84,7 +86,7 @@ Seeder nằm ở `src/PetSpa.Api/Data/Seeding/DbInitializer.cs`. Mặc định t
 | `SeedData:Staff1Password` | Mật khẩu riêng cho `staff1` (Lễ tân), cùng giới hạn trên. |
 | `SeedData:Staff2Password` | Mật khẩu riêng cho `staff2` (Kỹ thuật viên Spa), cùng giới hạn trên. |
 
-Chỉ cho phép môi trường `Development` hoặc `Testing`; bật seed ở `Production`/`Staging` sẽ dừng khởi động trước khi truy cập database. Dùng database phát triển riêng đã có schema; seeder **không** gọi `Migrate`/`EnsureCreated`. Seed ghi dữ liệu vào database được cấu hình, vì vậy hãy kiểm tra đúng database trước khi bật.
+Cho phép môi trường `Development`, `Testing` hoặc bootstrap `Staging` có chủ đích khi `SeedData:Enabled=true`; `Production` và môi trường khác bị chặn trước khi seeder truy cập database. Dùng database riêng đã có schema; seeder **không** gọi `Migrate`/`EnsureCreated`. Seed ghi dữ liệu vào database được cấu hình, vì vậy hãy kiểm tra đúng database trước khi bật. Sau bootstrap Staging phải tắt cờ, gỡ mật khẩu seed và restart theo runbook bên dưới.
 
 Seed gồm 4 khoảng size, 2 ca, 3 dịch vụ, 1 combo đủ 4 size, 2 loại phòng và tổng 16 giá, 3 tài khoản hash bằng ASP.NET Core `PasswordHasher<NhanVien>`, 24 permissions cùng grants FR01, slot/đăng ký ca cho ngày chọn và cấu hình `EXTENSION_SETTINGS` với `otpEmail`, `cocHotel`, `giuCho` đều `false`. Login ở Issue #5 cần dùng cùng cơ chế verify hash. Các lựa chọn dữ liệu mẫu chưa được kế hoạch chỉ định chi tiết: dịch vụ thứ ba là **Vệ sinh tai**, 30 phút, giá S/M/L/XL lần lượt 50/70/90/110 nghìn VND; key nội bộ cho nhóm cờ là `EXTENSION_SETTINGS`. Đây là dữ liệu phát triển, không phải quyết định giá vận hành thật. Dịch vụ cắt tỉa vẫn không được mua riêng theo contract nghiệp vụ.
 
@@ -137,3 +139,163 @@ dotnet test backend/PetSpa.sln -m:1
 ```
 
 Tham chiếu [spec #14](../docs/superpowers/specs/2026-11-22-issue-14-sprint2-foundation-design.md) và [implementation plan](../docs/superpowers/plans/2026-11-22-issue-14-sprint2-foundation.md). Build yêu cầu0 warnings/errors. Số đo local chỉ phục vụ đánh giá; không thay nghiệm thu NFR hoặc CI/review của nhóm.
+
+
+## Staging runbook — Issue #25
+
+### 1. Chuẩn bị và giới hạn
+
+Tech Lead thực hiện các thao tác cloud. Chọn Neon branch/database riêng cho Staging, Supabase private bucket riêng và Gmail/hộp thư test. Kiểm tra lại đúng project, branch và database trước migration hoặc seed; biến môi trường Staging không ngăn được việc trỏ nhầm database Production. Không dùng tài nguyên Production.
+
+- Neon Console → Connect: lấy direct connection cho migration và pooled connection cho API/live smoke, cùng database. Host/port theo Console; pooled host có `-pooler`, thông thường cả hai là 5432. Dùng connection string Npgsql `Host=...;Port=...;Database=...;Username=...;Password=...;SSL Mode=Require;Timeout=30`, không đặt URI `postgresql://...` trực tiếp vào khóa Npgsql. Giữ escaping password đúng định dạng connection string. Không dùng Neon account API token thay database password. [Neon guide](https://neon.com/docs/connect/connect-from-any-app).
+- Supabase → Storage → New Bucket: ví dụ `petspa-staging-media`, Public **tắt**; cho phép PNG/JPEG/WebP tối đa 5 MiB. Project URL gốc lấy từ Connect; Settings → API Keys lấy legacy `service_role` JWT tương thích adapter hiện tại, không dùng anon/publishable hoặc tự thay bằng `sb_secret_...`. Nếu project không có key tương thích, báo Lead để thống nhất thay đổi adapter riêng. Supabase chỉ phục vụ Storage; dữ liệu nghiệp vụ vẫn trên Neon. [Buckets](https://supabase.com/docs/guides/storage/buckets/creating-buckets), [API keys](https://supabase.com/docs/guides/getting-started/api-keys).
+- Gmail: bật 2-Step Verification, tạo [App Password](https://myaccount.google.com/apppasswords) tên PetSpa Staging. Dùng App Password thay mật khẩu Google thông thường; bỏ khoảng trắng phân nhóm hiển thị. Host `smtp.gmail.com`, port 587 STARTTLS, From/Username cùng Gmail đầy đủ. Không có mục App Password thì kiểm tra chính sách Workspace/Advanced Protection, không hạ bảo vệ tài khoản. [Google Help](https://support.google.com/mail/answer/185833?hl=en), [SMTP ports](https://developers.google.com/workspace/gmail/imap/imap-smtp).
+
+### 2. File cấu hình local và import vào shell Staging
+
+Tech Lead tự điền `backend/.env` trên máy. File đã được Git ignore; không gửi nội dung vào chat, commit hoặc đặt cloud secrets trong frontend/VITE variables. Kiểm tra từ repository root (không in nội dung):
+
+```powershell
+git check-ignore backend/.env
+git ls-files -- backend/.env
+```
+
+Lệnh đầu phải hiện đường dẫn, lệnh sau không có kết quả. File được ignore vẫn là plaintext trên máy; giữ trong nơi chỉ người vận hành được dùng. Mẫu dưới chỉ chứa placeholders, phải thay toàn bộ trước vận hành. Dùng mật khẩu bootstrap riêng cho ba tài khoản và JWT secret ngẫu nhiên ít nhất 32 bytes; không có mật khẩu seed mặc định.
+
+```dotenv
+ASPNETCORE_ENVIRONMENT=Staging
+DOTNET_ENVIRONMENT=Staging
+PETSPA_LIVE_SPIKE_ENABLED=false
+ConnectionStrings__MigrationConnection='Host=<DIRECT_HOST>;Port=<PORT>;Database=<DB>;Username=<DB_USER>;Password=<DB_PASSWORD>;SSL Mode=Require;Timeout=30'
+ConnectionStrings__DefaultConnection='Host=<POOLED_HOST>;Port=<PORT>;Database=<DB>;Username=<DB_USER>;Password=<DB_PASSWORD>;SSL Mode=Require;Timeout=30'
+Supabase__Storage__Url=https://<PROJECT_REF>.supabase.co
+Supabase__Storage__Bucket=petspa-staging-media
+Supabase__Storage__ServiceRoleKey=<LEGACY_SERVICE_ROLE_JWT>
+Smtp__Host=smtp.gmail.com
+Smtp__Port=587
+Smtp__EnableSsl=true
+Smtp__From=<SENDER_GMAIL>
+Smtp__Username=<SENDER_GMAIL>
+Smtp__Password=<GOOGLE_APP_PASSWORD>
+LiveSpike__EmailRecipient=<TEST_RECIPIENT_EMAIL>
+SeedData__Enabled=false
+SeedData__Date=<YYYY-MM-DD>
+SeedData__AdminPassword=<UNIQUE_BOOTSTRAP_PASSWORD_12_TO_128_CHARS>
+SeedData__Staff1Password=<DIFFERENT_BOOTSTRAP_PASSWORD_12_TO_128_CHARS>
+SeedData__Staff2Password=<DIFFERENT_BOOTSTRAP_PASSWORD_12_TO_128_CHARS>
+CatalogSeed__Enabled=false
+Jwt__SecretKey=<RANDOM_SECRET_AT_LEAST_32_BYTES>
+```
+
+.NET, EF CLI và xUnit **không tự đọc .env**. Mở cửa sổ PowerShell riêng tại repository root, import literal bằng đoạn sau; không chạy file bằng Invoke-Expression/dot-source, không echo biến secrets. Chỉ hỗ trợ một `NAME=value` trên mỗi dòng, optional cặp nháy ngoài, comment ở đầu dòng; không có export, multiline, inline comments hoặc nội suy `${...}`. Dấu `=`, `#`, `$`, `;` trong giá trị được giữ nguyên.
+
+```powershell
+$petspaEnvPath = Join-Path (Get-Location) 'backend/.env'
+foreach ($petspaEnvLine in [IO.File]::ReadAllLines($petspaEnvPath)) {
+    if ([string]::IsNullOrWhiteSpace($petspaEnvLine) -or $petspaEnvLine.TrimStart().StartsWith('#')) { continue }
+    $petspaEnvParts = $petspaEnvLine.Split('=', 2)
+    if ($petspaEnvParts.Count -ne 2 -or $petspaEnvParts[0].Trim() -notmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+        throw 'Invalid .env entry; use one NAME=value per line. Values are not displayed.'
+    }
+    $petspaEnvName = $petspaEnvParts[0].Trim()
+    $petspaEnvValue = $petspaEnvParts[1].Trim()
+    if ($petspaEnvValue.Length -ge 2 -and (
+        ($petspaEnvValue.StartsWith('"') -and $petspaEnvValue.EndsWith('"')) -or
+        ($petspaEnvValue.StartsWith("'") -and $petspaEnvValue.EndsWith("'")))) {
+        $petspaEnvValue = $petspaEnvValue.Substring(1, $petspaEnvValue.Length - 2)
+    }
+    [Environment]::SetEnvironmentVariable($petspaEnvName, $petspaEnvValue, 'Process')
+}
+Remove-Variable petspaEnvLine, petspaEnvParts, petspaEnvName, petspaEnvValue -ErrorAction SilentlyContinue
+```
+
+Chỉ process con được mở từ shell này nhận các biến. Không dùng setx để persist secret. Khi dùng worktree riêng, file .env từ checkout cũ không tự được copy; import file người vận hành đang giữ bằng đường dẫn tuyệt đối hoặc tạo cấu hình local riêng. Không copy file secret vào artifact/review package. Test offline dùng shell sạch, không import file Staging. Đóng shell Staging sau khi thao tác.
+
+### 3. Migration qua direct connection
+
+Từ root, sau import, xác nhận đúng target trong Console và giữ hai seed flags false. Chỉ lệnh dưới áp dụng migrations hiện có; không tạo migration mới hoặc EnsureCreated/EnsureDeleted:
+
+```powershell
+dotnet tool restore
+dotnet ef database update --project backend/src/PetSpa.Api --startup-project backend/src/PetSpa.Api
+```
+
+Factory đọc `ConnectionStrings__MigrationConnection` trong process, không truyền password bằng CLI arguments. Role migration phải có quyền DDL để áp dụng schema. Không bật verbose/trace làm lộ cấu hình. Khi thiếu biến, factory vẫn dùng connectionless fallback cho migration generation nhưng database update sẽ không có connection để chạy. Runtime không đọc MigrationConnection và không tự migrate. Schema gồm 33 bảng ứng dụng và bảng EF `__EFMigrationsHistory` riêng.
+
+### 4. Bootstrap một lần trong môi trường Staging
+
+Chọn `SeedData__Date` theo ngày nghiệm thu tại Việt Nam. Trong cùng shell đã import:
+
+```powershell
+$env:SeedData__Enabled = 'true'
+try {
+    dotnet run --no-launch-profile --project backend/src/PetSpa.Api
+}
+finally {
+    $env:SeedData__Enabled = 'false'
+    Remove-Item Env:SeedData__AdminPassword,Env:SeedData__Staff1Password,Env:SeedData__Staff2Password -ErrorAction SilentlyContinue
+}
+```
+
+`--no-launch-profile` giữ Staging env thay vì bị launch profile đổi về Development. Chờ startup hoàn tất và kiểm tra dữ liệu; dừng API bằng Ctrl+C, rồi khối finally tắt seed/gỡ seed passwords. Xóa ba seed password khỏi file .env, giữ `SeedData__Enabled=false` trong file, sau đó khởi động lại API không seed:
+
+```powershell
+dotnet run --no-launch-profile --project backend/src/PetSpa.Api
+```
+
+Không import lại .env còn cờ seed true. Không đổi môi trường sang Development. Seeder tạo 3 account `admin/staff1/staff2`, 24 permissions và grants, 4 sizes, 3 services, 1 combo, 2 room types, 16 prices, 2 ca và slot/đăng ký APPROVED của staff chăm sóc cho ngày đã chọn. `FUR_CONDITIONS` có 6 mã; `EXTENSION_SETTINGS` ban đầu là `{ "otpEmail": false, "cocHotel": false, "giuCho": false }`. Giá/catalog seed là mẫu phục vụ nghiệm thu, chưa là giá vận hành được duyệt.
+
+Nhắc đổi mật khẩu bootstrap, đặc biệt Admin, theo quy trình quản trị được Lead duyệt trước khi bàn giao rộng. Đổi biến seed password hoặc chạy lại seed không đổi hash account đã có. Issue này không tạo API đổi/reset password; không dùng route giả hoặc SQL ghi hash tùy tiện. Ghi trạng thái rotation còn chờ nếu quy trình chưa sẵn sàng.
+
+CatalogSeed chỉ chạy bổ sung FUR_CONDITIONS: đặt `CatalogSeed__AdminId` là ID Admin active thật và `CatalogSeed__Enabled=true`, giữ SeedData false; sau kiểm tra tắt lại và restart. Bootstrap đầy đủ đã gọi cùng logic catalog nên không cần bật cả hai đồng thời. Không tự bật OTP/deposit flags trong smoke test. Muốn bật Hotel deposit phải có `cocHotel=true` cùng `giuCho=true`; E57 chưa được triển khai trong Issue này, thao tác quản trị cờ cần thống nhất riêng.
+
+### 5. Kiểm tra API thật sau restart
+
+Trong cửa sổ khác, điền URL API thực tế đã được cấp hoặc URL API local đang chạy với Staging env/Neon:
+
+```powershell
+$petspaApiBase = '<API_BASE_URL>'
+Invoke-RestMethod "$petspaApiBase/api/health"
+Invoke-RestMethod "$petspaApiBase/api/catalog"
+```
+
+Health phải HTTP 200 và `status=Healthy`; endpoint này không query DB. Catalog E02 phải HTTP 200, `success=true`, data có danh mục/size/room/combo đã seed. Đây là kiểm tra startup/DI/runtime DB mà ba adapter tests độc lập không thực hiện. Kiểm tra HTTP status khi request lỗi; không coi JSON bất kỳ là đạt.
+
+Frontend chạy `VITE_USE_MOCK_API=false`, URL backend đúng; CORS hiện hỗ trợ `http://localhost:5173` và `http://127.0.0.1:5173`. Domain hosting khác cần thay đổi được thống nhất riêng. Không đưa key server vào frontend.
+
+### 6. Chạy live smoke có chủ đích
+
+Giữ API chạy ở cửa sổ riêng sau restart. Sau migration/bootstrap và API read checks, mở **cửa sổ PowerShell thứ hai** tại repository root, import lại file `.env` đã gỡ seed passwords và giữ SeedData=false theo bước 2. Cửa sổ chạy API đang bị chiếm bởi process foreground nên không dùng nó để nhập lệnh test. Chạy live smoke từ cửa sổ thứ hai vừa import:
+
+```powershell
+$petspaPreviousLiveFlag = $env:PETSPA_LIVE_SPIKE_ENABLED
+try {
+    $env:PETSPA_LIVE_SPIKE_ENABLED = 'true'
+    dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~LiveIntegrationSpikeTests" --logger "console;verbosity=detailed" -m:1
+    if ($LASTEXITCODE -ne 0) { throw 'Live smoke failed; inspect sanitized test output.' }
+}
+finally {
+    $env:PETSPA_LIVE_SPIKE_ENABLED = $petspaPreviousLiveFlag
+}
+```
+
+File .env mặc định giữ flag false; nếu trước đó đã bật true trong shell, cuối phiên phải tự tắt hoặc đóng shell. Flag theo code mẫu spec chấp nhận true không phân biệt hoa/thường, không trim hay nhận 1/yes. Thiếu/sai config khi bật phải fail, không fallback sang mock. Mỗi test chỉ yêu cầu config dịch vụ của nó; có thể filter thêm tên test để chạy lại đúng dịch vụ cần kiểm tra.
+
+- Neon: chỉ đọc qua pooled endpoint, timeout kết nối tối thiểu 30 giây; kiểm tra đủ 33 tên bảng đúng schema, FUR_CONDITIONS và EXTENSION_SETTINGS hợp lệ. Cold start có thể chậm; có thể đánh thức branch qua Console trước chạy, không tắt TLS hoặc đổi sang local để lấy PASS.
+- Storage: PNG 1×1 hợp lệ được upload phẳng tại root bucket Staging thành `{GUID}.png`, signed URL TTL 300 giây được tải anonymous và đối chiếu byte, public URL anonymous phải từ chối 400/403/404. Delete đúng object trong finally bằng token riêng 15 giây. `CLEANUP_FAILED` làm test fail và hiện objectPath để Lead dọn tay; không xóa theo toàn bucket. Nếu upload thành công nhưng mất response trước nhận path, có thể còn object chưa xác định: kiểm tra bucket theo thời điểm chạy, không cam kết cleanup tuyệt đối khi mất mạng.
+- SMTP: gửi một email thật chứa mã giả `SMOKE-TEST-...` tới `LiveSpike__EmailRecipient`; không tự retry. PASS chỉ chứng minh server chấp nhận mail. Lead kiểm tra inbox/spam để xác nhận delivery và ghi hai kết quả riêng.
+
+Không chia sẻ raw logs từ nhà cung cấp, connection strings, signed URLs hay key. Bộ smoke chỉ xuất giai đoạn/status/type lỗi đã lọc và objectPath cleanup. Không coi offline PASS/no-op là đã chạy live.
+
+### 7. Regression offline và bàn giao #27
+
+Mở shell sạch, cấu hình `PETSPA_TEST_POSTGRES` tới PostgreSQL local riêng bằng cách cấp secret phù hợp môi trường của bạn; giữ live flag false. Không import backend/.env Staging:
+
+```powershell
+$env:PETSPA_LIVE_SPIKE_ENABLED = 'false'
+dotnet test backend/PetSpa.sln -m:1
+```
+
+Yêu cầu toàn suite PASS, 0 errors, 0 warnings. No-op output của ba live tests xem bằng `--filter "FullyQualifiedName~LiveIntegrationSpikeTests" --logger "console;verbosity=detailed"`. PostgreSQL regression fixture chỉ tạo/migrate/drop database `petspa_test_<GUID>` nó sở hữu; không được trỏ PETSPA_TEST_POSTGRES sang Neon.
+
+Handoff #27 ghi commit/version, topology/URL backend/frontend không nhạy cảm, ngày có slot/ca APPROVED, cách cấp tài khoản và quyền qua kênh riêng. Ghi riêng: offline regression; migration/bootstrap; API health/catalog; live Neon/Storage/SMTP; inbox delivery; cleanup; rotation. Checkpoint chưa chạy ghi **PENDING**, lỗi ghi **FAIL**, không đánh dấu live hoàn tất bằng kết quả offline. Browser nghiệm thu có đăng nhập thuộc #27, không thuộc ba tests này.
