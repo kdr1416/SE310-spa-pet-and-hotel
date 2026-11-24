@@ -686,6 +686,10 @@ flowchart TD
 
 ### Task 11 (Issue #24): [Scheduling] Lịch Làm Việc & Quản Lý Ca Kíp (`E27, E28, E29, E54, E55`)
 
+> GitHub tracking thực tế: [Issue #48](https://github.com/kdr1416/SE310-spa-pet-and-hotel/issues/48); #24 là mã task lịch sử trong kế hoạch, không phải GitHub issue Scheduling.
+
+> Cập nhật được duyệt 2026-11-24: [thiết kế #24](../../superpowers/specs/2026-11-23-issue-24-shift-scheduling-design.md) và [implementation plan #24](../../superpowers/plans/2026-11-24-issue-24-shift-scheduling.md). Chỉ E28 yêu cầu đợt đang mở; E54 độc lập, E29/E55 được thao tác sau deadline. Trước slot → registration locks, Scheduling và pha commit assignment E15/E16 dùng chung employee advisory key. Phạm vi bổ sung tối thiểu CheckinService.cs, helper khóa dùng chung và tests concurrency; không thay schema. E55 áp dụng thêm guard Hotel hiện tại/tương lai đã check-in chưa trả thực tế, kể cả không có service line ở nguồn. Chi tiết khóa và TDD dùng implementation plan đã liên kết; checklist cũ dưới đây là mô tả tổng quan.
+
 - **Assignee:** `Tech Lead`
 - **Branch:** `feat/issue-24-shift-scheduling`
 - **Dependencies:** Issue #14 đã merge.
@@ -702,12 +706,12 @@ flowchart TD
 - Produces:
   - `E27` (`GET /api/internal/work-schedule`):
     - Quyền `SCHEDULE_REGISTER`. Validate `tuNgay <= denNgay` và khoảng ngày $\le 90$ ngày (`400 INVALID_DATE_RANGE` nếu sai).
-    - Nếu người gọi là `STAFF` và truyền `maNhanVien != actorId`: trả `403 FORBIDDEN` (`maNhanVien` là Admin-only filter theo contract mục 3.1). Nếu không truyền `maNhanVien`: `STAFF` chỉ xem lịch của chính mình (`actorId`), `ADMIN` xem toàn bộ (hoặc theo `maNhanVien` nếu truyền).
+    - Nếu người gọi là `STAFF` và truyền bất kỳ `maNhanVien` nào (kể cả ID chính mình): trả `403 FORBIDDEN` (`maNhanVien` là Admin-only filter theo contract mục 3.1). Nếu không truyền `maNhanVien`: `STAFF` chỉ xem lịch của chính mình (`actorId`), `ADMIN` xem toàn bộ (hoặc theo `maNhanVien` nếu truyền).
   - `E54` (`POST /api/admin/shift-windows`):
     - Quyền `SCHEDULE_APPROVE`. Kiểm tra replay idempotency theo `(actorId, "SHIFT_WINDOW_CREATE", request.RequestId)` trong `audit_log` (replay hợp lệ trả `200 OK`). Validate `tuNgay <= denNgay` và `moAt < dongAt`.
     - Tạo bản ghi `DotDangKyCa`, ghi `AuditLog`, trả `201 Created` (`ShiftWindowDto`).
   - `E28` (`POST /api/internal/shift-registrations`):
-    - Quyền `SCHEDULE_REGISTER`. Kiểm tra replay idempotency theo `(actorId, "SHIFT_REGISTER", request.RequestId)` trong `audit_log` (replay hợp lệ trả `200 OK`). Khóa `ca_lam_viec` $\rightarrow$ `dang_ky_ca` của nhân viên trong ngày `request.Ngay`.
+    - Quyền `SCHEDULE_REGISTER`. Kiểm tra replay idempotency theo `(actorId, "SHIFT_REGISTER", request.RequestId)` trong `audit_log` (replay hợp lệ trả `200 OK`). Dùng employee advisory lock chung với E15/E16 trước khi kiểm tra duplicate/overlap; khóa các registration liên quan theo ID tăng. Không chỉ khóa ca mẫu/row hiện hữu vì không bảo vệ được hai đăng ký đầu tiên chồng giờ.
     - Guard:
       - Ca `request.MaCa` tồn tại và `IsActive == true`.
       - Theo `D17`: nếu `request.Ngay` nằm trong bảng `NgayNghi` (đóng tiếp nhận khách mới), chỉ nhân viên có quyền `CARE_UPDATE` mới được phép đăng ký ca để trực chăm sóc thú cưng Hotel đang lưu trú; nếu nhân viên không có quyền `CARE_UPDATE` thì trả `409 INVALID_TRANSITION`.
@@ -728,14 +732,14 @@ flowchart TD
       2. Nếu nhân viên có quyền `CARE_UPDATE` và ca cũ có `KhungGioDatLich` đang giữ khách (`SlotDaDat > 0` hoặc `PhutDaGiu > 0`): việc rút nhân viên khỏi ca cũ không được làm số kỹ thuật viên `APPROVED` còn lại về `0` khi `SlotDaDat > 0` và không làm trần phút khả dụng của ca cũ (`min(slot.TranPhut, remainingCareStaff * shiftMinutes)`) tụt xuống thấp hơn `slot.PhutDaGiu` đã cam kết với khách (nếu vi phạm trả `409 CAPACITY_EXCEEDED`).
     - Cập nhật `Ngay = request.Ngay`, `CaLamViecId = request.MaCa`, `LyDoDieuChuyen = request.LyDo.Trim()`, `UpdatedAt = now` (và đảm bảo `KhungGioDatLich` ở ngày/ca mới tồn tại), ghi `AuditLog`.
 
-- [ ] **Step 1: Write the failing tests in `WorkScheduleEndpointTests.cs`**
+- [x] **Step 1: Write the failing tests in `WorkScheduleEndpointTests.cs`**
   - Test `E54` mở đợt đăng ký ca $\rightarrow$ `E28` nhân viên đăng ký ca trong đợt (`201 PENDING`, replay trả `200`) và bị chặn `409 INVALID_TRANSITION` khi ngoài đợt, chồng giờ, hoặc đăng ký lại vào đúng ca đã bị `REJECTED` trước đó $\rightarrow$ `E29` Admin duyệt ca sang `APPROVED` $\rightarrow$ `E27` nhân viên xem lịch ca của mình (và bị chặn `403` khi truyền `maNhanVien` của người khác).
   - Test `E55` điều chuyển ca `APPROVED` thành công khi ca cũ chưa có booking giữ phút; test `E55` bị chặn `409 INVALID_TRANSITION` khi ca đích đã có bản ghi `REJECTED`/`PENDING` hoặc nhân viên đang được gán pet chưa `DONE`; và test `E55` bị chặn `409 CAPACITY_EXCEEDED` khi nhân viên là kỹ thuật viên duy nhất đang gánh `PhutDaGiu > 0` ở ca cũ.
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
   - Run: `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~WorkScheduleEndpointTests" -m:1`
   - Expected: FAIL.
-- [ ] **Step 3: Implement `WorkScheduleService` and `WorkScheduleController`**
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 3: Implement `WorkScheduleService` and `WorkScheduleController`**
+- [x] **Step 4: Run tests to verify they pass**
   - Run: `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~WorkScheduleEndpointTests" -m:1`
   - Expected: PASS 100%.
 - [ ] **Step 5: Commit**
