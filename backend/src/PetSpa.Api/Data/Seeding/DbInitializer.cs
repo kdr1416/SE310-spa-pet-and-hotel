@@ -21,8 +21,8 @@ public static class DbInitializer
     public static async Task InitializeAsync(PetSpaDbContext context, SeedDataOptions options,
         IHostEnvironment environment, CancellationToken cancellationToken = default)
     {
-        if (!environment.IsDevelopment() && !environment.IsEnvironment("Testing"))
-            throw new InvalidOperationException("Seed data is allowed only in Development or Testing.");
+        if (!environment.IsDevelopment() && !environment.IsEnvironment("Testing") && !environment.IsStaging())
+            throw new InvalidOperationException("Seed data is allowed only in Development, Testing or Staging.");
         options.Validate();
         var date = options.Date ?? DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(
             DateTime.UtcNow, TimeZoneInfo.FindSystemTimeZoneById("Asia/Ho_Chi_Minh")));
