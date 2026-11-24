@@ -326,12 +326,7 @@ public sealed class ExtraChargeService(
             if (targetPet is null)
                 return FailCmd<FeeDto>("Phụ phí gỡ rối lông bắt buộc gắn với một thú cưng cụ thể.", "INVALID_TRANSITION");
 
-            var allowedFurCodes = await LoadAllowedDetanglingFurCodesAsync(ct);
-            var petFurCodes = ReadFurConditions(targetPet.TinhTrangLong);
-            var hasQualifyingFur = petFurCodes.Any(code => allowedFurCodes.Contains(code));
-            var hasPhotoEvidence = targetPet.NhatKyChamSocChiTietDonItems.Any(log => !string.IsNullOrWhiteSpace(log.ObjectPath));
-
-            if (!hasQualifyingFur && !hasPhotoEvidence)
+            if (!await HasDetanglingEvidenceAsync(targetPet, ct))
             {
                 return FailCmd<FeeDto>(
                     "Phụ phí gỡ rối lông yêu cầu thú cưng có tình trạng lông rối nặng hoặc có ảnh nhật ký chăm sóc chứng minh.",
@@ -427,6 +422,7 @@ public sealed class ExtraChargeService(
         var booking = await context.DonDatLichSet
             .Include(b => b.HoaDonDonDatLichItems)
             .Include(b => b.ChiTietDonDonDatLichItems)
+                .ThenInclude(p => p.NhatKyChamSocChiTietDonItems)
             .Include(b => b.PhuPhiDonDatLichItems)
             .AsSplitQuery()
             .FirstOrDefaultAsync(b => b.Id == feeHeader.DonDatLichId, ct);
@@ -446,6 +442,15 @@ public sealed class ExtraChargeService(
             var pet = booking.ChiTietDonDonDatLichItems.FirstOrDefault(p => p.Id == fee.ChiTietDonId.Value);
             if (pet is { TrangThaiChamSoc: PetCareState.DONE or PetCareState.CANCELLED })
                 return FailCmd<FeeDto>("Không thể sửa phụ phí của thú cưng đã bàn giao hoặc đã hủy.", "INVALID_TRANSITION");
+        }
+
+        var resultingName = request.TenPhuPhi?.Trim() ?? fee.TenPhuPhi;
+        if (resultingName.Contains("gỡ rối", StringComparison.OrdinalIgnoreCase)
+            || resultingName.Contains("go roi", StringComparison.OrdinalIgnoreCase))
+        {
+            var pet = booking.ChiTietDonDonDatLichItems.FirstOrDefault(p => p.Id == fee.ChiTietDonId);
+            if (pet is null || !await HasDetanglingEvidenceAsync(pet, ct))
+                return FailCmd<FeeDto>("Phụ phí gỡ rối lông yêu cầu thú cưng đủ điều kiện hoặc ảnh nhật ký chứng minh.", "INVALID_TRANSITION");
         }
 
         var now = clock.GetUtcNow();
@@ -645,6 +650,13 @@ public sealed class ExtraChargeService(
         {
             return [];
         }
+    }
+
+    private async Task<bool> HasDetanglingEvidenceAsync(ChiTietDon pet, CancellationToken ct)
+    {
+        var allowedFurCodes = await LoadAllowedDetanglingFurCodesAsync(ct);
+        return ReadFurConditions(pet.TinhTrangLong).Any(allowedFurCodes.Contains)
+            || pet.NhatKyChamSocChiTietDonItems.Any(log => !string.IsNullOrWhiteSpace(log.ObjectPath));
     }
 
     private Task<Role?> GetActorRoleAsync(int actorId, string permission, CancellationToken ct) =>

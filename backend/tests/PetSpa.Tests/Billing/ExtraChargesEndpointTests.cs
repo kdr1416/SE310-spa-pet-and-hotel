@@ -26,6 +26,40 @@ public sealed class ExtraChargesEndpointTests
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task Fees_RenamingGeneralFeeToDetanglingRechecksPetEvidence(bool attachedToPet, bool qualifyingFur)
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db =>
+            SeedExtraChargeScenario(db, seed, PetCareState.IN_PROGRESS, qualifyingFur ? "[\"ROI_NANG\"]" : "[\"BINH_THUONG\"]"));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Staff!));
+        var payload = new Dictionary<string, object>
+        {
+            ["requestId"] = Guid.NewGuid(), ["tenPhuPhi"] = "Phí đón trễ", ["soTien"] = 50_000,
+            ["lyDo"] = "Đón ngoài giờ"
+        };
+        if (attachedToPet) payload["maChiTietDon"] = seed.BookingPetId;
+        using var created = await client.PostAsJsonAsync($"/api/internal/bookings/{seed.BookingId}/fees", payload);
+        created.StatusCode.Should().Be(HttpStatusCode.Created);
+        var fee = (await created.Content.ReadFromJsonAsync<ApiResponse<FeeDto>>(JsonOptions))!.Data!;
+        using var edited = await client.PatchAsJsonAsync($"/api/internal/fees/{fee.MaPhuPhi}", new
+        {
+            requestId = Guid.NewGuid(), tenPhuPhi = "Phụ phí gỡ rối lông", lyDo = "Đổi tên phụ phí"
+        });
+        edited.StatusCode.Should().Be(qualifyingFur ? HttpStatusCode.OK : HttpStatusCode.Conflict);
+        if (!qualifyingFur)
+            (await edited.Content.ReadFromJsonAsync<ApiResponse<FeeDto>>(JsonOptions))!.ErrorCode.Should().Be("INVALID_TRANSITION");
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        var stored = await db.PhuPhiSet.SingleAsync();
+        stored.TenPhuPhi.Should().Be(qualifyingFur ? "Phụ phí gỡ rối lông" : "Phí đón trễ");
+        stored.SoTien.Should().Be(50_000m);
+    }
+
     // =========================================================================
     // E20: Thêm dịch vụ đơn & combo phát sinh, giữ phút cùng ca, replay & guards
     // =========================================================================
