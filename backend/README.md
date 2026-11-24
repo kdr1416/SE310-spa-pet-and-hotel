@@ -162,30 +162,14 @@ git ls-files -- backend/.env
 
 Lệnh đầu phải hiện đường dẫn, lệnh sau không có kết quả. File được ignore vẫn là plaintext trên máy; giữ trong nơi chỉ người vận hành được dùng. Mẫu dưới chỉ chứa placeholders, phải thay toàn bộ trước vận hành. Dùng mật khẩu bootstrap riêng cho ba tài khoản và JWT secret ngẫu nhiên ít nhất 32 bytes; không có mật khẩu seed mặc định.
 
-```dotenv
-ASPNETCORE_ENVIRONMENT=Staging
-DOTNET_ENVIRONMENT=Staging
-PETSPA_LIVE_SPIKE_ENABLED=false
-ConnectionStrings__MigrationConnection='Host=<DIRECT_HOST>;Port=<PORT>;Database=<DB>;Username=<DB_USER>;Password=<DB_PASSWORD>;SSL Mode=Require;Timeout=30'
-ConnectionStrings__DefaultConnection='Host=<POOLED_HOST>;Port=<PORT>;Database=<DB>;Username=<DB_USER>;Password=<DB_PASSWORD>;SSL Mode=Require;Timeout=30'
-Supabase__Storage__Url=https://<PROJECT_REF>.supabase.co
-Supabase__Storage__Bucket=petspa-staging-media
-Supabase__Storage__ServiceRoleKey=<LEGACY_SERVICE_ROLE_JWT>
-Smtp__Host=smtp.gmail.com
-Smtp__Port=587
-Smtp__EnableSsl=true
-Smtp__From=<SENDER_GMAIL>
-Smtp__Username=<SENDER_GMAIL>
-Smtp__Password=<GOOGLE_APP_PASSWORD>
-LiveSpike__EmailRecipient=<TEST_RECIPIENT_EMAIL>
-SeedData__Enabled=false
-SeedData__Date=<YYYY-MM-DD>
-SeedData__AdminPassword=<UNIQUE_BOOTSTRAP_PASSWORD_12_TO_128_CHARS>
-SeedData__Staff1Password=<DIFFERENT_BOOTSTRAP_PASSWORD_12_TO_128_CHARS>
-SeedData__Staff2Password=<DIFFERENT_BOOTSTRAP_PASSWORD_12_TO_128_CHARS>
-CatalogSeed__Enabled=false
-Jwt__SecretKey=<RANDOM_SECRET_AT_LEAST_32_BYTES>
+Mẫu được theo dõi trong Git: [.env_example](.env_example). Nếu chưa có file local, tạo bản sao rồi tự điền secrets; không ghi đè file .env đã có:
+
+```powershell
+if (-not (Test-Path -LiteralPath 'backend/.env')) {
+    Copy-Item -LiteralPath 'backend/.env_example' -Destination 'backend/.env'
+}
 ```
+
 
 .NET, EF CLI và xUnit **không tự đọc .env**. Mở cửa sổ PowerShell riêng tại repository root, import literal bằng đoạn sau; không chạy file bằng Invoke-Expression/dot-source, không echo biến secrets. Chỉ hỗ trợ một `NAME=value` trên mỗi dòng, optional cặp nháy ngoài, comment ở đầu dòng; không có export, multiline, inline comments hoặc nội suy `${...}`. Dấu `=`, `#`, `$`, `;` trong giá trị được giữ nguyên.
 

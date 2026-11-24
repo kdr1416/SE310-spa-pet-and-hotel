@@ -268,3 +268,9 @@ Không dùng `setx` để persist credentials ra user/machine environment. Chỉ
 - Final verification: `dotnet test backend/PetSpa.sln -m:1`, PostgreSQL local loopback, live flag false: **632/632 PASS**, 0 skipped, 0 errors, 0 warnings (5m39s). No-op filter riêng: **3/3 PASS**, có thông báo NO-OP, từng Fact dưới 7ms.
 - README PowerShell đã qua syntax parsing và import behavior với dữ liệu giả chứa `=;#$`; không đọc `.env` thật. README/plan local links và `git diff --check` PASS. Approved spec giữ nguyên nội dung do người dùng duyệt.
 - Implementation commits: `f708b22` factory/config; `fe45d2e` Staging bootstrap; `805278e` live smoke/support; `ed53e42` review fixes. Docs commit đi cùng phiên bàn giao này. Hai P2 review đã được xử lý; không merge/push/PR.
+
+### Bổ sung trước PR theo yêu cầu Tech Lead
+
+- Thêm `backend/.env_example` chứa placeholders và các cờ live/seed mặc định false; không đọc/copy từ `.env` thật.
+- README trỏ tới template và có lệnh tạo file local chỉ khi chưa tồn tại; giữ hướng dẫn import tường minh.
+- Tech Lead yêu cầu push nhánh #25 và tạo PR vào develop; không tự merge PR hoặc chạy thao tác cloud.
