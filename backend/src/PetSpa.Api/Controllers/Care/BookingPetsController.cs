@@ -4,6 +4,8 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PetSpa.Api.Services.Care;
 using PetSpa.Core.Common;
+using PetSpa.Core.DTOs.Billing;
+using PetSpa.Core.DTOs.Booking;
 using PetSpa.Core.DTOs.Care;
 using PetSpa.Core.Interfaces.Care;
 
@@ -308,6 +310,97 @@ public class BookingPetsController(
             HttpContext.TraceIdentifier,
             cancellationToken);
 
+        if (!result.IsSuccess)
+        {
+            var errorBody = ApiResponse<BookingPet>.Fail(
+                result.Message,
+                result.ErrorCode ?? "VALIDATION_FAILED",
+                result.Errors,
+                HttpContext.TraceIdentifier);
+
+            return StatusCode(result.StatusCode, errorBody);
+        }
+
+        return Ok(ApiResponse<BookingPet>.Ok(result.Data!, result.Message));
+    }
+
+    [HttpPost("/api/admin/booking-pets/{id:int}/cancel")]
+    public async Task<ActionResult<ApiResponse<BookingPet>>> CancelPet(
+        [FromRoute] int id,
+        [FromBody] PetCancelRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirst("id")?.Value, out var actorId) || actorId <= 0)
+        {
+            return Unauthorized(ApiResponse<BookingPet>.Fail(
+                "Phiên đăng nhập không hợp lệ.",
+                "UNAUTHENTICATED",
+                null,
+                HttpContext.TraceIdentifier));
+        }
+
+        var result = await handoverService.CancelPetAsync(
+            id,
+            actorId,
+            request,
+            HttpContext.TraceIdentifier,
+            cancellationToken);
+
+        return MapHandoverResult(result);
+    }
+
+    [HttpPost("/api/admin/booking-pets/{id:int}/early-handover")]
+    public async Task<ActionResult<ApiResponse<BookingPet>>> EarlyHandover(
+        [FromRoute] int id,
+        [FromBody] ReasonCommand request,
+        CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirst("id")?.Value, out var actorId) || actorId <= 0)
+        {
+            return Unauthorized(ApiResponse<BookingPet>.Fail(
+                "Phiên đăng nhập không hợp lệ.",
+                "UNAUTHENTICATED",
+                null,
+                HttpContext.TraceIdentifier));
+        }
+
+        var result = await handoverService.EarlyHandoverAsync(
+            id,
+            actorId,
+            request,
+            HttpContext.TraceIdentifier,
+            cancellationToken);
+
+        return MapHandoverResult(result);
+    }
+
+    [HttpPost("{id:int}/return-cancelled")]
+    public async Task<ActionResult<ApiResponse<BookingPet>>> ReturnCancelledPet(
+        [FromRoute] int id,
+        [FromBody] BookingCommand request,
+        CancellationToken cancellationToken)
+    {
+        if (!int.TryParse(User.FindFirst("id")?.Value, out var actorId) || actorId <= 0)
+        {
+            return Unauthorized(ApiResponse<BookingPet>.Fail(
+                "Phiên đăng nhập không hợp lệ.",
+                "UNAUTHENTICATED",
+                null,
+                HttpContext.TraceIdentifier));
+        }
+
+        var result = await handoverService.ReturnCancelledPetAsync(
+            id,
+            actorId,
+            request,
+            HttpContext.TraceIdentifier,
+            cancellationToken);
+
+        return MapHandoverResult(result);
+    }
+
+    private ActionResult<ApiResponse<BookingPet>> MapHandoverResult(HandoverResult result)
+    {
         if (!result.IsSuccess)
         {
             var errorBody = ApiResponse<BookingPet>.Fail(
