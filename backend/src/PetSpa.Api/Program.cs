@@ -98,6 +98,7 @@ builder.Services.AddScoped<BookingCreateService>();
 builder.Services.AddScoped<BookingProofService>();
 builder.Services.AddScoped<BookingManagementService>();
 builder.Services.AddScoped<CustomerLookupService>();
+builder.Services.AddScoped<PetSpa.Api.Services.Scheduling.WorkScheduleService>();
 builder.Services.AddScoped<BookingOptionsService>();
 builder.Services.AddScoped<FurConditionsService>();
 builder.Services.AddScoped<CareTasksService>();
@@ -157,6 +158,7 @@ builder.Services.AddDbContext<PetSpaDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
 
 builder.Services.AddScoped<IInvoiceService, InvoiceService>();
+builder.Services.AddScoped<IDepositService, DepositService>();
 builder.Services.AddScoped<ICatalogService, CatalogService>();
 
 // CORS configuration for local frontend development
