@@ -234,3 +234,10 @@ Final review phát hiện hai lỗi thực tế và đã có test RED: (1) E54 t
 - Không còn Critical/Important được phát hiện chưa xử lý; không có minor findings bị hoãn. Không dispatch review vòng hai; dùng tests tái hiện và full suite theo executing-plans.
 - Hoàn tất thực hiện sáu task. Branch feat/issue-24-shift-scheduling và worktree được giữ nguyên; không commit/push/PR/merge/deploy. Không sửa Entity/DbContext/migration/dependency hoặc frontend.
 - Bằng chứng chi tiết nằm trong ignored plan workspace .superpowers/sdd/2026-11-24-issue-24-shift-scheduling/. Server PostgreSQL test đã được dừng sau verification; data/log giữ lại, không xóa scratch hoặc database ngoài ownership.
+
+## Công bố GitHub — được người dùng yêu cầu 2026-11-24
+
+- Issue tracking thực tế: #48; mã #24 trong tên nhánh/plan là mã task lịch sử, không trỏ đến PR Billing #24.
+- Implementation commit sau rebase: 5cc4e97, base origin/develop c82f612 (đã gồm PR #43/#47 cho #17/#20). Rebase không có conflict; giữ CustomerLookupService và các DI từ PR #42.
+- Build sau rebase: 0 warnings/errors. Full regression sau rebase: PASS 585/585, skipped 0, 8m27s, trên cluster PostgreSQL loopback riêng (rebase-full-tests.log).
+- Người dùng đã cho phép commit, push và tạo PR vào develop; chưa cho phép merge/deploy. PR dùng Closes #48. Ghi nhận kết quả này bằng commit tài liệu; không sửa production code sau lượt tests trên.

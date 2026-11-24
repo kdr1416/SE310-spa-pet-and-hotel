@@ -104,3 +104,5 @@ Các chữ “đề xuất/cần duyệt” trong phần audit và phân tích t
 Implementation plan: [Issue #24](../plans/2026-11-24-issue-24-shift-scheduling.md). Plan đã được người dùng review và cho phép thực hiện bằng superpowers:executing-plans với TDD; không dùng subagent-driven-development. Implementation đã hoàn tất; full regression 548/548 và build 0 warnings/errors, xem bằng chứng trong plan. Chưa commit/push/PR/merge/deploy.
 
 Review clarification 2026-11-24: plan đã đối chiếu consolidated review và ghi disposition từng item. Giữ employee-wide key để bảo vệ Hotel khác ngày, giữ traceId cho audit và 503 theo contract. Bổ sung ScheduleResult để controller tạo envelope, IsRelational guard cho Care InMemory regressions, canonical fingerprint và tái sử dụng helper test hiện có. Đây là làm rõ kỹ thuật trong phạm vi bốn quyết định đã duyệt, không thay đổi policy hoặc schema.
+
+Công bố được người dùng yêu cầu 2026-11-24: Issue GitHub #48; rebase lên develop c82f612, build 0 warnings/errors và full regression 585/585, skipped 0. Cho phép commit/push/tạo PR, chưa merge/deploy; trạng thái chưa commit ở phần lịch sử trên đã được thay thế bởi mốc công bố này.

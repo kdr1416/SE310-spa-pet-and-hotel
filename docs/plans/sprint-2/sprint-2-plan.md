@@ -742,7 +742,7 @@ flowchart TD
 - [x] **Step 4: Run tests to verify they pass**
   - Run: `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~WorkScheduleEndpointTests" -m:1`
   - Expected: PASS 100%.
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
   - `git commit -m "feat(scheduling): implement work schedule E27-E29, shift windows E54, and shift transfer E55"`
 
 ---
