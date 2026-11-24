@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using PetSpa.Api.Data;
 using PetSpa.Api.Data.Seeding;
 using Microsoft.Extensions.Hosting;
@@ -196,12 +197,14 @@ public class SeedDataTests
         Assert.True(json.RootElement.GetProperty("otpEmail").GetBoolean());
     }
 
-    [Fact]
-    public async Task MissingPassword_RejectsStartup_WithoutPartialSeed()
+    [Theory]
+    [InlineData("Testing")]
+    [InlineData("Staging")]
+    public async Task MissingPassword_RejectsStartup_WithoutPartialSeed(string environment)
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         using var factory = SeedApplicationFactory.Create(database.ConnectionString,
-            SeedApplicationFactory.NewPassword(), missingStaffPassword: true);
+            SeedApplicationFactory.NewPassword(), environment, missingStaffPassword: true);
         var error = Assert.Throws<InvalidOperationException>(() => factory.Services);
         Assert.Contains("SeedData:Staff2Password", error.Message);
         await using var context = database.CreateContext();
@@ -211,7 +214,7 @@ public class SeedDataTests
 
     [Theory]
     [InlineData("Production")]
-    [InlineData("Staging")]
+    [InlineData("Preview")]
     public void EnabledSeed_RejectsNonDevelopmentEnvironments_BeforeDatabaseAccess(string environment)
     {
         using var factory = SeedApplicationFactory.Create("Host=127.0.0.1;Port=1;Database=unused",
@@ -244,22 +247,28 @@ public class SeedDataTests
         Assert.Equal(0, await verify.NhanVienQuyenSet.CountAsync());
     }
 
-    [Fact]
-    public async Task DisabledSeed_DoesNotConnectToDatabase()
+    [Theory]
+    [InlineData("Testing")]
+    [InlineData("Staging")]
+    public async Task DisabledSeed_DoesNotConnectToDatabase(string environment)
     {
         using var factory = SeedApplicationFactory.Create("Host=127.0.0.1;Port=1;Database=unused",
-            string.Empty, enabled: false);
+            string.Empty, environment, enabled: false).WithWebHostBuilder(builder =>
+                builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(
+                    new Dictionary<string, string?> { ["DepositExpiry:BackgroundEnabled"] = "false" })));
         using var client = factory.CreateClient(new() { BaseAddress = new Uri("https://localhost") });
         var response = await client.GetAsync("/api/health");
         Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
     }
 
-    [Fact]
-    public async Task Startup_SeedsCatalogAccountsPermissionsAndApprovedShifts()
+    [Theory]
+    [InlineData("Testing")]
+    [InlineData("Staging")]
+    public async Task Startup_SeedsCatalogAccountsPermissionsAndApprovedShifts(string environment)
     {
         await using var database = await PostgresTestDatabase.CreateAsync();
         var password = SeedApplicationFactory.NewPassword();
-        using var factory = SeedApplicationFactory.Create(database.ConnectionString, password);
+        using var factory = SeedApplicationFactory.Create(database.ConnectionString, password, environment);
         using var scope = factory.Services.CreateScope();
         var context = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
 
