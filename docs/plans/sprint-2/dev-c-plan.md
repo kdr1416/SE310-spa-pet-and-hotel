@@ -10,6 +10,22 @@
 - [docs/requirements/scope-and-decisions.md](../../requirements/scope-and-decisions.md) (`D07, D08, Q06, T02/T05/T08, M2-01, M2-02, M2-04, M2-05, M2-06, M2-07, M2-11`)
 - [backend/README.md](../../../backend/README.md) và [.github/CONTRIBUTING.md](../../../.github/CONTRIBUTING.md)
 
+## Handoff frontend #26 — hóa đơn và thu tiền (2026-11-23)
+
+Sprint 1 đã hoàn tất; hoàn thiện caller/UI trong Sprint 2 theo [plan chính — phối hợp #26](sprint-2-plan.md#phối-hợp-tích-hợp-frontend-issue-26-cập-nhật-2026-11-23). #14 đã có trên develop tại `067aea1` (PR #36).
+
+- **Owner:** Lead (#26) sửa adapter/caller/form; Dev C cung cấp fixture và xác nhận E23/E24/E26 đã có từ #11 cùng các mở rộng #23. Core Spa wiring #26 không phải chờ #23; nghiệm thu Hotel/cọc/thu hồi chờ #21–#23.
+- **Không tự điều phối E23→E26:** UI lập hóa đơn riêng bằng bookingId; thu tiền dùng `maHoaDon`/invoiceId của hóa đơn đã có. Collect phải có `requestId, phuongThuc, soTienThucNhan, soTienDaTraLai` và chứng từ nếu contract yêu cầu; không giả định tiền đã thu bằng tổng tiền, không suy invoiceId từ bookingId.
+- **M2-L04 / M2-L05 và quy tắc thu tiền–bàn giao:** E26 chỉ đổi PAID, không tự DONE; E19 do Dev B cung cấp và Lead nối riêng. requestId giữ qua retry chưa rõ kết quả; lỗi AMOUNT_MISMATCH/IDEMPOTENCY_CONFLICT trả thật, không chạy mock.
+- **#23 → #26:** fixture Invoice bảo toàn `maHoaDon, maDon, trangThai, tongTien, cocKhauTru, conPhaiTra, thayTheHoaDon, qr`; khi zero-due đã PAID thì UI không gửi E26 giao dịch 0 đồng; khi REVOKED không dùng QR/hóa đơn cũ để thu tiền.
+- Không đổi backend contract hoặc nghiệp vụ để tương thích UI cũ; 56 test frontend là baseline để bổ sung regression, không phải giới hạn sửa form.
+
+### Checklist phối hợp và kiểm chứng
+
+- [ ] Bàn giao fixture E23/E24/E26 với bookingId khác invoiceId, thực thu/trả thừa, thiếu tiền 409, replay cùng requestId và zero-due theo #23.
+- [ ] Chạy `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~InvoicesEndpointTests" -m:1`; gửi kết quả cho Lead. Xác nhận E26 không hoàn tất bàn giao thay E19.
+- [ ] Lead có Vitest/component tests FAIL→PASS: confirmPayment không gọi E23, đúng invoiceId/Collect, lỗi không fallback mock; UI smoke trong #26 đối chiếu dữ liệu backend trước nghiệm thu #27.
+
 ## Handoff foundation Issue #14 (2026-11-22)
 
 Đọc [spec #14](../../superpowers/specs/2026-11-22-issue-14-sprint2-foundation-design.md) và [implementation plan](../../superpowers/plans/2026-11-22-issue-14-sprint2-foundation.md) trước khi consume foundation.

@@ -10,6 +10,22 @@
 - [docs/requirements/scope-and-decisions.md](../../requirements/scope-and-decisions.md) (`D04, D05, D06, D07, D10, D13, D14, D15, D16, D17, D19, Q01, Q05, M2-01, M2-06, M2-11, M2-13`)
 - [backend/README.md](../../../backend/README.md) và [.github/CONTRIBUTING.md](../../../.github/CONTRIBUTING.md)
 
+## Handoff frontend #26 — nguồn slot và booking (2026-11-23)
+
+Sprint 1 đã hoàn tất; hoàn thiện khoảng trống tích hợp trong Sprint 2 theo [plan chính — phối hợp #26](sprint-2-plan.md#phối-hợp-tích-hợp-frontend-issue-26-cập-nhật-2026-11-23). #14 đã có trên develop tại `067aea1` (PR #36). Các ước tính cũ chưa gồm công việc phát sinh nếu cần amendment API slot.
+
+- **Owner:** Dev A phối hợp Tech Lead chốt nguồn slot Public trước nghiệm thu booking live #26; Lead sở hữu adapter/UI, Dev A sở hữu contract/backend booking. #24 tạo slot khi duyệt ca nhưng không đồng nghĩa có API Public liệt kê slot.
+- **Contract:** E03 nhận `maKhungGio, ngayTra, thuCung`; E04/E05 nhận `BookingCreate`. `maCa`/hai nhãn Sáng–Chiều không thay thế slot ID theo ngày. Không dùng endpoint Admin E34a cho khách Public hoặc seed fixture làm dữ liệu vận hành.
+- **Checkpoint cần chốt:** nguồn `ngày → maKhungGio` thật chưa được quyết định. Nếu cần route/DTO mới, Lead trình duyệt amendment và giao Issue riêng trong Sprint 2 trước khi code; không tự sửa contract hay cộng operation vào #15.
+- **Handoff #15 → #26:** fixture contract đúng cho E03/E04 (slot ID thật, ServiceSelection, multipart vaccinationFileKey), success/error; nguồn dữ liệu slot được duyệt phải có owner và acceptance tests. Core routing #26 không phải chờ #15, còn nghiệm thu Hotel/Combo/cọc chờ backend tương ứng.
+- **Handoff #17 → #26:** cung cấp fixture E10b có dữ liệu booking/assignment theo contract khi cần; Lead không suy slot hoặc employee ID từ tên trong projection E10a.
+
+### Checklist phối hợp và kiểm chứng
+
+- [ ] Với Lead, ghi quyết định nguồn slot/Issue được giao trong plan chính trước nghiệm thu booking live; nếu thay contract phải được duyệt và có xUnit endpoint tests theo quy định.
+- [ ] Backend E03/E04 giữ kiểm tra ngày/sức chứa theo D04/Q01, D11/Q07, D17; fixture dùng slot hai ngày có ID khác nhau. Lead viết Vitest/component test đảm bảo UI gửi slot ID đúng, không lấy `maCa` thay thế.
+- [ ] Chạy kiểm chứng #15 hiện có: `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~Availability|FullyQualifiedName~BookingCreate" -m:1`; bàn giao kết quả cho Lead, không tự sửa frontend.
+
 ## Handoff foundation Issue #14 (2026-11-22)
 
 Đọc [spec #14](../../superpowers/specs/2026-11-22-issue-14-sprint2-foundation-design.md) và [implementation plan](../../superpowers/plans/2026-11-22-issue-14-sprint2-foundation.md) trước khi consume foundation.

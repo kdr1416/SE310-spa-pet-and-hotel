@@ -89,6 +89,20 @@
 
 ---
 
+## Phối hợp tích hợp frontend Issue #26 (cập nhật 2026-11-23)
+
+Sprint 1 đã hoàn tất; các khoảng trống tích hợp frontend–backend phát hiện khi chuẩn bị #26 được hoàn thiện trong Sprint 2, không mở lại nghiệm thu Sprint 1. #14 đã có trên `develop` tại `067aea1` (PR #36). Tham khảo [spec #26 đang draft](../../superpowers/specs/2026-11-23-issue-26-sprint1-hybrid-routing-design.md); nguồn chuẩn vẫn là API contract và scope-and-decisions.
+
+| Phần việc | Owner và phụ thuộc | Handoff / điều kiện nghiệm thu |
+|---|---|---|
+| Slot thật cho form đặt lịch | Tech Lead (#26) phối hợp Dev A (#15); #24 phụ trách tạo slot khi duyệt ca | Chốt nguồn `ngày → maKhungGio` trong Sprint 2 trước nghiệm thu đặt lịch live. Hai nhãn Sáng/Chiều không phải slot ID; không hardcode `maCa == maKhungGio`. E03 chỉ kiểm tra slot đã biết; E34a là API Admin, không dùng cho Public. Nếu cần route/DTO mới, Lead trình duyệt amendment và giao Issue riêng trước khi code; chưa tự tăng baseline 68 operations. |
+| Ứng viên phân công | Dev B cung cấp E14 trong #18; Lead nối UI trong phần follow-up #26 sau #18 merge | Chỉ mở live E14 khi dependency sẵn sàng; đây là endpoint hỗ trợ bổ sung ngoài allowlist 15 operations ban đầu, không mở toàn bộ Sprint 2. Không dùng nhân viên mock để phân công booking thật. |
+| Check-in / care UI | Lead (#26), Dev B xác nhận E15/E17/E18/E19 | Sửa tối thiểu form/caller để lấy ảnh, sức khỏe, quyết định giá, xác nhận và action START/RESUME đúng contract. Không default xác nhận thay người dùng. Phân quyền live dùng `quyen`, không suy workGroup hoặc tự cấp quyền STAFF. |
+| Hóa đơn / thu tiền / bàn giao | Lead (#26), Dev C handoff E23/E24/E26; Dev B handoff E19 | Tạo hóa đơn và thu tiền là hai thao tác; truyền invoiceId, thực thu/trả thừa rõ ràng. Không tự chạy E23 khi gọi confirmPayment; E26 không tự DONE. Bàn giao E19 có xác nhận riêng. Hotel/cọc mở rộng phối hợp #23. |
+| Mock actor | Lead (#26), quyết định policy trước implementation fallback private | Tách demo context khỏi identity và dữ liệu live; không dùng backend employee ID như seed ID. Mapping Admin→1/Staff→2 mới là đề xuất chưa duyệt, không mặc định triển khai. Lỗi live không chuyển mock; không thao tác mock lên booking thật. |
+
+Không chờ #18 để làm core routing/session/tests; chờ #18 cho phần E14. Không chuyển việc nối UI sang #27 một cách ngầm định: #26 sở hữu tích hợp và Vitest/component tests; #27 nghiệm thu HTTP backend và kiểm tra bằng chứng UI của #26. Nguồn slot/policy actor còn mở là checkpoint phải chốt, không phải giải pháp đã duyệt. Ước tính 5h cũ của #26 chỉ cho core routing, cần ước tính lại phần UI/follow-up sau khi chốt hai checkpoint này.
+
 ## 2. TIẾN TRÌNH THỰC HIỆN SONG SONG (PARALLEL SCHEDULE)
 
 ```mermaid
@@ -104,7 +118,7 @@ flowchart TD
         I26["Issue #26 Phase 1 (1–2 ngày): Hybrid Routing (G6)<br/>Core Transport cho 15 operations Sprint 1"]
         I24["Issue #24 (5h): Lịch & Ca kíp<br/>E27, E28, E29, E54, E55"]
         I25["Issue #25 (4h): Neon Staging (direct/pooled)<br/>& Live Spike Supabase + MailKit SMTP"]
-        I26 --> I24 --> I25
+        I24 --> I25
     end
 
     subgraph Lane2["Làn 2: Dev A"]
@@ -129,6 +143,8 @@ flowchart TD
     end
 
     L_LEAD --> I26
+    L_LEAD --> I24
+    I18 -.->|E14 handoff cho follow-up| I26
     L_DEVA --> I15
     L_DEVB --> I18
     L_DEVC --> I21
@@ -755,7 +771,7 @@ flowchart TD
 - **Scope:** Neon migration dùng direct endpoint, runtime/live smoke dùng pooled endpoint; host/port lấy từ Neon Console (thường cùng 5432, pooled host có `-pooler`), không ép 6543. Factory đọc `ConnectionStrings__MigrationConnection`, giữ connectionless fallback; bootstrap Staging qua `SeedData:Enabled`, Production vẫn chặn. Ba real-adapter tests opt-in giữ CI offline no-op PASS.
 - **Spec/plan đã duyệt:** [Design](../../superpowers/specs/2026-11-24-issue-25-staging-and-live-smoke-design.md), [Implementation plan](../../superpowers/plans/2026-11-24-issue-25-staging-and-live-smoke.md).
 
-**Handoff browser smoke #26 → #27 (chốt 2026-11-23):** #25 chuẩn bị môi trường; #27 thực hiện nghiệm thu browser có đăng nhập. Trước khi bàn giao, xác nhận backend chạy và kết nối Neon test/staging đã migrate/seed, frontend live trỏ đúng backend với `VITE_USE_MOCK_API=false` và CORS hợp lệ, tài khoản test có quyền lễ tân/thu ngân và Staff chăm sóc cùng ca APPROVED, private bucket/Signed URL và hộp thư SMTP test đã qua live spike. Chỉ bàn giao thông tin cấu hình không nhạy cảm và cách cấp tài khoản test, không ghi credentials vào plan. PostgreSQL local thật đã được dùng trong test #26; phần chưa nghiệm thu là môi trường tích hợp live và browser đăng nhập.
+**Handoff browser smoke #26 → #27 (chốt 2026-11-23):** #25 chuẩn bị môi trường; #27 thực hiện nghiệm thu browser có đăng nhập. Trước khi bàn giao, xác nhận backend chạy và kết nối Neon test/staging đã migrate/seed, frontend live trỏ đúng backend với `VITE_USE_MOCK_API=false` và CORS hợp lệ (`http://localhost:5173`), tài khoản test có quyền lễ tân/thu ngân và Staff chăm sóc cùng ca APPROVED, private bucket/Signed URL và hộp thư SMTP test đã qua live spike. Chỉ bàn giao thông tin cấu hình không nhạy cảm và cách cấp tài khoản test, không ghi credentials vào plan. PostgreSQL local thật đã được dùng trong test #26; phần chưa nghiệm thu là môi trường tích hợp live và browser đăng nhập.
 
 - [ ] Bàn giao môi trường sẵn sàng và kết quả live spike cho checklist browser Spa ở **#27 – Task 14, Step 3b**. Nếu môi trường chưa sẵn sàng, ghi rõ browser smoke là pending, không coi test double hoặc noop spike là đã nghiệm thu live.
 
@@ -812,6 +828,10 @@ flowchart TD
 - Modify: script của `frontend/src/components/shared/BookingNotifications.vue` cho debounce (ngoại lệ Task 7, giữ template)
 - Create: `frontend/src/services/api/sprint1Adapter.js`
 - Create: `frontend/tests/unit/sprint1HybridRouting.spec.js`
+- Modify (tối thiểu theo luồng, không redesign): `frontend/src/components/booking/BookingForm.vue`, `BookingDetailDialog.vue`, `BookingDecisionPanel.vue` trong cùng thư mục; `frontend/src/views/staff/StaffCareTasksView.vue`; `frontend/src/stores/workspace.js`; `frontend/src/utils/permissions.js`; `frontend/src/services/api/bookingService.js` (expose action E14/E19 khi nối).
+- Test: cập nhật/thêm test phù hợp trong `frontend/tests/components/` cho input check-in, thanh toán/bàn giao và slot mapping; không giữ giới hạn 56 tests để tránh sửa UI thiếu input.
+
+**Bổ sung scope và checkpoint:** #26 nhận sửa tối thiểu caller/form để gửi DTO thật, giữ requestId cho logical command qua retry và thêm response aliases/pagination phù hợp. E14 là follow-up hỗ trợ được mở tường minh sau #18, không dùng mock candidates cho booking live. Lead + Dev A chốt nguồn slot (hoặc amendment/Issue riêng được duyệt) trong Sprint 2; không bịa slot từ hai ca cố định. Lead chốt demo actor context riêng; chưa duyệt role→seed-ID mapping. Chi tiết ownership ở mục “Phối hợp tích hợp frontend Issue #26”.
 
 **Interfaces:**
 - Consumes: `httpClient` (Axios instance, sử dụng duy nhất cờ `IS_MOCK_ENABLED = import.meta.env.VITE_USE_MOCK_API !== "false"` có sẵn, không đẻ thêm cờ config thừa), `mockCall` (`mockRepository.js`)
@@ -845,7 +865,9 @@ flowchart TD
 - [ ] **Step 3: Implement adapter, session, dispatch, transport, permissions và debounce theo implementation plan Phase 1**
 - [ ] **Step 4: Run full frontend test suite to verify everything passes**
   - Run: `npm --prefix frontend test -- --run`
+  - Run: `npm --prefix frontend run build`
   - Expected: PASS 100%.
+- [ ] **Step 4a: Nghiệm thu tích hợp UI trên môi trường test được cấp** — booking dùng slot thật → duyệt → check-in có ảnh/ứng viên E14 → care → lập hóa đơn → thu tiền → bàn giao riêng. Ghi bằng chứng và giới hạn; Vitest giả lập không thay bằng chứng gọi backend thật. Smoke chưa chạy hoặc checkpoint chưa khép thì không tuyên bố #26 end-to-end hoàn tất.
 - [ ] **Step 5: Commit**
   - `git commit -m "feat(frontend): implement allowlist hybrid routing in operationClient and fix E01 session mapping"`
 

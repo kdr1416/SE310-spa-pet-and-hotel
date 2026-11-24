@@ -10,6 +10,22 @@
 - [docs/requirements/scope-and-decisions.md](../../requirements/scope-and-decisions.md) (`D03/Q07, D06/Q08, D07/Q06, D11/Q07, M2-04, M2-05, M2-07`)
 - [backend/README.md](../../../backend/README.md) và [.github/CONTRIBUTING.md](../../../.github/CONTRIBUTING.md)
 
+## Handoff frontend #26 — phân công, check-in và bàn giao (2026-11-23)
+
+Sprint 1 đã hoàn tất; khoảng trống UI được hoàn thiện trong Sprint 2 theo [plan chính — phối hợp #26](sprint-2-plan.md#phối-hợp-tích-hợp-frontend-issue-26-cập-nhật-2026-11-23). #14 đã có trên develop tại `067aea1` (PR #36).
+
+- **#18 → follow-up #26:** Dev B cung cấp E14 `GET /api/internal/assignment-candidates?ngay=...&maCa=...`, trả `Employee[]` chỉ gồm người active, có CARE_UPDATE và ca APPROVED. Sau #18 merge, Lead nối action E14 tường minh trong adapter/service và form; không dùng mock users cho booking thật. Core routing #26 có thể làm trước #18, nhưng check-in UI đầy đủ chờ handoff này.
+- **E15:** bàn giao fixture multipart `payload` Checkin + `anhTiepNhan`, mã tình trạng lông hợp lệ và các lỗi validation/assignment. Lead sửa form lấy cân nặng, sức khỏe, quyết định giá, xác nhận khách và giấy nếu cần; adapter không tự xác nhận thay người dùng. D03/Q07, D11/Q07, D12, D15 giữ guard ở server.
+- **E17/E18:** bàn giao START/PAUSE/RESUME/READY và yêu cầu ảnh/log; Lead truyền action rõ ràng, không ánh xạ mọi IN_PROGRESS thành START.
+- **E19:** bàn giao payload `requestId, xacNhanDaNhan` và fixture PAID→handover. E26 chỉ PAID; không dùng semantics mock tự DONE để hoàn tất booking live (D06/Q08 và amendment M2).
+- **Ownership:** Dev B chỉ sửa backend/tests care; Lead sở hữu caller/form, permissions live theo `quyen`, adapter và component tests. #27 kiểm tra bằng chứng tích hợp, không nhận việc nối UI E14 ngầm định.
+
+### Checklist phối hợp và kiểm chứng
+
+- [ ] Handoff #18 có fixture E14 đúng `Employee[]`, query ngay/maCa và lỗi 403/409 phù hợp operation; xác nhận mã lông/input E15 từ nguồn thật, không phát minh code hoặc candidate.
+- [ ] Chạy `dotnet test backend/PetSpa.sln --filter "FullyQualifiedName~AssignmentEndpointTests|FullyQualifiedName~CheckinEndpointTests|FullyQualifiedName~HandoverEndpointTests" -m:1`; gửi kết quả và fixture cho Lead.
+- [ ] Lead xác nhận Vitest/component tests FAIL→PASS cho E14→E15 và E26/E19 riêng; trước nghiệm thu Sprint 2 có live UI smoke trong #26. #18 không phụ thuộc #26 để merge backend, tránh vòng phụ thuộc.
+
 ## Handoff foundation Issue #14 (2026-11-22)
 
 Đọc [spec #14](../../superpowers/specs/2026-11-22-issue-14-sprint2-foundation-design.md) và [implementation plan](../../superpowers/plans/2026-11-22-issue-14-sprint2-foundation.md) trước khi consume foundation.
