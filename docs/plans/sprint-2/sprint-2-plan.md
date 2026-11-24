@@ -797,7 +797,7 @@ flowchart TD
 
 ---
 
-**Live evidence bổ sung 2026-11-24:** Được Tech Lead cho phép thực hiện: chuẩn hóa Npgsql env, migration direct tạo33 bảng, bootstrap và restart seed-disabled PASS; health/catalog200, catalog3 dịch vụ/1 combo/2 phòng/4 sizes. Seed3 accounts/24 permissions/39 grants/16 giá,2 shifts/2 APPROVED registrations/2 slots ngày **2026-11-25**. Neon smoke1/1 PASS sau bootstrap; Supabase roundtrip/private/cleanup và Gmail SMTP acceptance PASS ở lượt live trước. Các trạng thái Cloud PENDING cũ được thay bằng evidence này; inbox delivery, password rotation, browser #27/hosting vẫn PENDING. Không merge PR #50. Chi tiết và giới hạn topology ở mục Live acceptance của implementation plan.
+**Live evidence bổ sung 2026-11-24:** Được Tech Lead cho phép thực hiện: chuẩn hóa Npgsql env, migration direct tạo33 bảng, bootstrap và restart seed-disabled PASS; health/catalog200, catalog3 dịch vụ/1 combo/2 phòng/4 sizes. Seed3 accounts/24 permissions/39 grants/16 giá,2 shifts/2 APPROVED registrations/2 slots ngày **2026-11-25**. Neon smoke1/1 PASS sau bootstrap; Supabase roundtrip/private/cleanup và Gmail SMTP acceptance PASS ở lượt live trước. Các trạng thái Cloud PENDING cũ được thay bằng evidence này; inbox delivery, password rotation, browser #27/hosting vẫn PENDING. Agent không merge PR #50; khi kiểm tra cuối GitHub cho thấy PR đã được merge bên ngoài thao tác này tại c5677d4. Evidence mới được push lên nhánh Issue #25 sau khi PR đóng. Chi tiết và giới hạn topology ở mục Live acceptance của implementation plan.
 
 ---
 
