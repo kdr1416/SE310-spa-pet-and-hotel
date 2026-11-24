@@ -27,6 +27,111 @@ public sealed class ExtraChargesEndpointTests
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
     [Theory]
+    [InlineData(SizeBand.S, 50_000)]
+    [InlineData(SizeBand.M, 80_000)]
+    [InlineData(SizeBand.L, 90_000)]
+    [InlineData(SizeBand.XL, 110_000)]
+    public async Task AddExtraService_UsesSizeCodeInsteadOfDatabaseKey(SizeBand size, decimal expectedPrice)
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db => SeedExtraChargeScenario(db, seed, PetCareState.IN_PROGRESS, size: size));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Staff!));
+
+        using var response = await client.PostAsJsonAsync($"/api/internal/booking-pets/{seed.BookingPetId}/extra-services", new
+        {
+            requestId = Guid.NewGuid(), maDichVu = seed.ExtraSingleServiceId, maKhungGio = seed.SlotId, lyDo = "Thêm dịch vụ theo size chốt"
+        });
+
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<OrderService>>(JsonOptions);
+        body!.Data!.GiaChot.Should().Be(expectedPrice);
+        body.Data.SizeChot.Should().Be(size.ToString());
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        var line = await db.DichVuTrongDonSet.SingleAsync(s => s.Id == body.Data.MaDichVuTrongDon);
+        JsonSerializer.Deserialize<Dictionary<SizeBand, decimal>>(line.BangGiaSizeSnapshot, JsonOptions)![size].Should().Be(expectedPrice);
+        var slot = await db.KhungGioDatLichSet.SingleAsync(s => s.Id == seed.SlotId);
+        slot.SlotDaDat.Should().Be(1);
+        slot.PhutDaGiu.Should().Be(90);
+    }
+
+    [Theory]
+    [InlineData(SizeBand.S, 300_000, 50_000)]
+    [InlineData(SizeBand.M, 350_000, 80_000)]
+    [InlineData(SizeBand.L, 400_000, 90_000)]
+    [InlineData(SizeBand.XL, 450_000, 110_000)]
+    public async Task AddExtraCombo_FreezesSizePricesAndRetailComponentPrices(SizeBand size, decimal comboPrice, decimal extraPrice)
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db => SeedExtraChargeScenario(db, seed, PetCareState.IN_PROGRESS, size: size));
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Staff!));
+        var command = new { requestId = Guid.NewGuid(), maCombo = seed.ComboId, maKhungGio = seed.SlotId, lyDo = "Thêm combo theo size chốt" };
+        using var response = await client.PostAsJsonAsync($"/api/internal/booking-pets/{seed.BookingPetId}/extra-services", command);
+        response.StatusCode.Should().Be(HttpStatusCode.Created);
+        var body = await response.Content.ReadFromJsonAsync<ApiResponse<OrderService>>(JsonOptions);
+        body!.Data!.GiaChot.Should().Be(comboPrice);
+        body.Data.SizeChot.Should().Be(size.ToString());
+
+        using (var scope = factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+            foreach (var price in await db.BangGiaSizeSet.ToListAsync()) price.DonGia = 999_000m;
+            await db.SaveChangesAsync();
+        }
+        using var replay = await client.PostAsJsonAsync($"/api/internal/booking-pets/{seed.BookingPetId}/extra-services", command);
+        replay.StatusCode.Should().Be(HttpStatusCode.OK);
+        (await replay.Content.ReadFromJsonAsync<ApiResponse<OrderService>>(JsonOptions))!.Data!.GiaChot.Should().Be(comboPrice);
+        using var verify = factory.Services.CreateScope();
+        var saved = verify.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        var line = await saved.DichVuTrongDonSet.Include(s => s.ThanhPhanDichVuTrongDonDichVuTrongDonItems)
+            .SingleAsync(s => s.Id == body.Data.MaDichVuTrongDon);
+        JsonSerializer.Deserialize<Dictionary<SizeBand, decimal>>(line.BangGiaSizeSnapshot, JsonOptions)![size].Should().Be(comboPrice);
+        line.ThanhPhanDichVuTrongDonDichVuTrongDonItems.Should().HaveCount(2);
+        foreach (var part in line.ThanhPhanDichVuTrongDonDichVuTrongDonItems)
+        {
+            var retail = JsonSerializer.Deserialize<Dictionary<SizeBand, decimal>>(part.GiaLeSizeSnapshot, JsonOptions)!;
+            retail[size].Should().Be(part.DichVuId == seed.ExtraSingleServiceId ? extraPrice : 200_000m);
+        }
+        var slot = await saved.KhungGioDatLichSet.SingleAsync(s => s.Id == seed.SlotId);
+        slot.SlotDaDat.Should().Be(1);
+        slot.PhutDaGiu.Should().Be(150);
+        (await saved.DichVuTrongDonSet.CountAsync(s => s.LaPhatSinh)).Should().Be(1);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task AddExtraService_MissingSizePrice_DoesNotReserveOrPersist(bool combo)
+    {
+        var seed = new SeedRefs();
+        using var factory = AuthApplicationFactory.Create(db =>
+        {
+            SeedExtraChargeScenario(db, seed, PetCareState.IN_PROGRESS);
+            db.BangGiaSizeSet.RemoveRange(db.BangGiaSizeSet.Where(p => p.KhoangSize.MaSize == SizeBand.M &&
+                (combo ? p.ComboId == seed.ComboId : p.DichVuId == seed.ExtraSingleServiceId)));
+            db.SaveChanges();
+        });
+        using var client = factory.CreateClient();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", GenerateJwtFor(seed.Staff!));
+        var requestId = Guid.NewGuid();
+        object payload = combo
+            ? new { requestId, maKhungGio = seed.SlotId, maCombo = seed.ComboId, lyDo = "Thiếu giá cho size chốt" }
+            : new { requestId, maKhungGio = seed.SlotId, maDichVu = seed.ExtraSingleServiceId, lyDo = "Thiếu giá cho size chốt" };
+        using var response = await client.PostAsJsonAsync($"/api/internal/booking-pets/{seed.BookingPetId}/extra-services", payload);
+        response.StatusCode.Should().Be(HttpStatusCode.Conflict);
+        (await response.Content.ReadFromJsonAsync<ApiResponse<object>>(JsonOptions))!.ErrorCode.Should().Be("INVALID_TRANSITION");
+        using var scope = factory.Services.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<PetSpaDbContext>();
+        (await db.DichVuTrongDonSet.CountAsync()).Should().Be(1);
+        var slot = await db.KhungGioDatLichSet.SingleAsync(s => s.Id == seed.SlotId);
+        slot.SlotDaDat.Should().Be(1);
+        slot.PhutDaGiu.Should().Be(60);
+        (await db.DonDatLichSet.SingleAsync(b => b.Id == seed.BookingId)).TongTamTinh.Should().Be(200_000m);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
     [InlineData(true, true)]
@@ -301,7 +406,8 @@ public sealed class ExtraChargesEndpointTests
         SeedRefs refs,
         PetCareState petCareState,
         string furJson = "[\"ROI_NANG\"]",
-        bool grantPermission = true)
+        bool grantPermission = true,
+        SizeBand size = SizeBand.M)
     {
         var now = new DateTimeOffset(2026, 11, 25, 1, 0, 0, TimeSpan.Zero); // 08:00 GMT+7
 
@@ -427,10 +533,21 @@ public sealed class ExtraChargesEndpointTests
         db.ComboSet.Add(combo);
         db.SaveChanges();
 
-        db.BangGiaSizeSet.AddRange(
-            new BangGiaSize { DichVuId = mainService.Id, SizeId = (int)SizeBand.M, DonGia = 200_000m, CreatedAt = now, UpdatedAt = now },
-            new BangGiaSize { DichVuId = extraService.Id, SizeId = (int)SizeBand.M, DonGia = 80_000m, CreatedAt = now, UpdatedAt = now },
-            new BangGiaSize { ComboId = combo.Id, SizeId = (int)SizeBand.M, DonGia = 350_000m, CreatedAt = now, UpdatedAt = now });
+        // Database keys deliberately differ from enum values and are not ordered by size.
+        foreach (var band in new[]
+        {
+            (Code: SizeBand.S, Id: 105, From: 0m, To: (decimal?)5m, Extra: 50_000m, Combo: 300_000m),
+            (Code: SizeBand.M, Id: 41, From: 5m, To: (decimal?)15m, Extra: 80_000m, Combo: 350_000m),
+            (Code: SizeBand.L, Id: 209, From: 15m, To: (decimal?)25m, Extra: 90_000m, Combo: 400_000m),
+            (Code: SizeBand.XL, Id: 73, From: 25m, To: (decimal?)null, Extra: 110_000m, Combo: 450_000m)
+        })
+        {
+            db.HeSoCanNangSet.Add(new HeSoCanNang { Id = band.Id, MaSize = band.Code, CanNangTu = band.From, CanNangDen = band.To });
+            db.BangGiaSizeSet.AddRange(
+                new BangGiaSize { DichVuId = mainService.Id, SizeId = band.Id, DonGia = 200_000m, CreatedAt = now, UpdatedAt = now },
+                new BangGiaSize { DichVuId = extraService.Id, SizeId = band.Id, DonGia = band.Extra, CreatedAt = now, UpdatedAt = now },
+                new BangGiaSize { ComboId = combo.Id, SizeId = band.Id, DonGia = band.Combo, CreatedAt = now, UpdatedAt = now });
+        }
         var customer = new KhachHang
         {
             HoTen = "Lê Văn C",
@@ -477,8 +594,8 @@ public sealed class ExtraChargesEndpointTests
             TenPetSnapshot = pet.TenThuCung,
             CanNangKhaiBao = 9m,
             CanNangChot = 9m,
-            SizeThucTe = SizeBand.M,
-            SizeChot = SizeBand.M,
+            SizeThucTe = size,
+            SizeChot = size,
             TinhTrangLong = furJson,
             TrangThaiChamSoc = petCareState,
             CheckInAt = now,
